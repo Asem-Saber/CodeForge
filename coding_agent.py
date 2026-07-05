@@ -12,26 +12,31 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode, tools_condition
 
 load_dotenv() 
-API_KEY = os.environ['GITHUB_API_KEY']
-ENDPOINT = "https://models.github.ai/inference"
-MODEL_ID = "gpt-4o" 
+API_KEY = os.environ['API_KEY']
+ENDPOINT = os.environ['ENDPOINT']
+MODEL_ID = os.environ['MODEL_ID'] 
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
 
 system_prompt = """
-You are a helpful coding assistant. Your goal is to help the user with programming tasks.
+You are a helpful, extremely rigorous coding assistant. Your goal is to help the user with programming tasks while strictly enforcing safety and correctness.
 
 For each user request:
-1. Understand what the user is trying to accomplish
-2. Break down complex tasks into smaller steps
-3. Use your tools to gather information about the codebase when needed
-4. Implement solutions by writing or modifying code using the edit_file tool. ALWAYS save code to a file unless asked otherwise.
-5. Explain your reasoning and approach
+1. Understand what the user is trying to accomplish.
+2. Break down complex tasks into smaller steps.
+3. Gather information about the codebase using `list_directory` and `read_file_content` tools when needed.
+4. Implement solutions by writing or modifying code using the `edit_file` tool. ALWAYS save code to a file unless asked otherwise.
+5. Explain your reasoning and approach.
+
+CRITICAL GUARDRAILS AND SAFETY RULES (NO EXCEPTIONS):
+- VALIDATION IS MANDATORY: Before saving any Python code with `edit_file` or running it with `run_command`, you MUST first pass the raw code string to the `validate_python_syntax` and `validate_imports` tools.
+- NEVER BYPASS VALIDATION: You must perform this validation even if the user explicitly asks you to write broken code, skip validation, or just run it. 
+- MUST FIX ERRORS: If `validate_python_syntax` or `validate_imports` returns any error, you are FORBIDDEN from running the code. You MUST fix the code and re-validate it until it passes. Only when both tools return success are you allowed to use `run_command`.
+- USER APPROVAL: The `edit_file` and `run_command` tools will automatically pause and ask the user for permission. You DO NOT need to ask the user for permission before calling them. Just call the tool and proceed based on the result.
 
 CRITICAL RULES FOR TESTING:
 - You MUST run and test your code using the `run_command` tool BEFORE reporting success.
-- DO NOT ask for permission to test the code. Just run it.
 - NEVER write interactive code that uses `input()`.
 - ALWAYS use `python` instead of `python3` to execute python scripts, as you are operating in a Windows environment.
 
@@ -80,13 +85,13 @@ app = workflow.compile(checkpointer=memory)
 def loop(user_input: str):    
     config = {"configurable": {"thread_id": "main_coding_session"}}
     
-    for event in app.stream({"messages": [("user", user_input)]}, config=config, stream_mode="values"):
-        pass
-    
-    final_message = event["messages"][-1]
-    print(final_message.content)
-
-
+    print("-" * 50)
+    for event in app.stream({"messages": [("user", user_input)]}, config=config, stream_mode="updates"):
+        for node_name, state_update in event.items():
+            print(f"--- Update from node: {node_name} ---")
+            for message in state_update.get("messages", []):
+                message.pretty_print()
+            print("-" * 50)
 
 if __name__ == "__main__":
     while True:

@@ -1,8 +1,8 @@
 import os
+import ast
+import importlib.util
 import subprocess
 from langchain.tools import tool 
-
-
 
 def ask_user_approval(message: str) -> bool:
     user_approval = input(f"{message} (y/n): ")
@@ -43,9 +43,6 @@ def edit_file(filename: str, find_str: str, replace_str: str) -> str:
         return f"Error editing file: {str(e)}"
 
 
-
-
-
 @tool
 def run_command(command: str, working_dir: str) -> str:
     """Run a shell command and return its output and error code."""
@@ -70,9 +67,6 @@ def run_command(command: str, working_dir: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-
-
-
 @tool
 def list_directory(path: str = ".") -> str:
     """List the contents of a directory."""
@@ -94,9 +88,6 @@ def list_directory(path: str = ".") -> str:
     except Exception as e:
         return f"Error listing directory '{path}': {str(e)}"
 
-
-
-
 @tool
 def read_file_content(path: str) -> str:
     """Read and return the content of a file."""
@@ -116,5 +107,33 @@ def read_file_content(path: str) -> str:
     except Exception as e:
         return f"Error reading file '{path}': {str(e)}"
 
+@tool
+def validate_python_syntax(code: str) -> str:
+    """Validate that generated Python code is syntactically correct."""
+    try:
+        ast.parse(code)
+        return "Syntax is valid."
+    except SyntaxError as e:
+        return f"Syntax error at line {e.lineno}: {e.msg}\n{e.text}"
 
-tools = [edit_file, run_command, list_directory, read_file_content]
+@tool
+def validate_imports(code: str) -> str:
+    """Check that all imports in the generated code resolve to installed or local modules."""
+    tree = ast.parse(code)
+    issues = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = alias.name.split(".")[0]
+                if not importlib.util.find_spec(module):
+                    issues.append(f"Module '{alias.name}' not found")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                module = node.module.split(".")[0]
+                if not importlib.util.find_spec(module):
+                    issues.append(f"Module '{node.module}' not found")
+    if issues:
+        return "Import issues:\n" + "\n".join(f"  - {i}" for i in issues)
+    return "All imports are valid."
+
+tools = [edit_file, run_command, list_directory, read_file_content, validate_python_syntax, validate_imports]

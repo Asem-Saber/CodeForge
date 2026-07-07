@@ -78,6 +78,15 @@ def call_model(state: AgentState):
 
 
 def process_execution(state: AgentState):
+    processed_ids = set()
+    for entry in state.get("generated_code", []):
+        for key in ("tool_call_id", "execution_id"):
+            if entry.get(key):
+                processed_ids.add(entry[key])
+    for entry in state.get("execution_results", []) + state.get("execution_errors", []):
+        if entry.get("tool_call_id"):
+            processed_ids.add(entry["tool_call_id"])
+
     code_entries = []
     results = []
     errors = []
@@ -92,6 +101,9 @@ def process_execution(state: AgentState):
         if not isinstance(message, ToolMessage):
             continue
 
+        if message.tool_call_id in processed_ids:
+            continue
+
         tc = tool_calls_by_id.get(message.tool_call_id)
         if tc is None:
             continue
@@ -101,6 +113,7 @@ def process_execution(state: AgentState):
             code = args.get("replace_str", "")
             if code:
                 code_entries.append({
+                    "tool_call_id": message.tool_call_id,
                     "code": code,
                     "language": "python",
                     "filename": args.get("filename"),

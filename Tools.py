@@ -1,8 +1,22 @@
 import os
 import ast
 import importlib.util
-import subprocess
-from langchain.tools import tool 
+from langchain.tools import tool
+from e2b_code_interpreter import Sandbox
+
+_sandbox_instance: Sandbox | None = None
+
+def get_sandbox() -> Sandbox:
+    global _sandbox_instance
+    if _sandbox_instance is None:
+        _sandbox_instance = Sandbox.create(timeout=300)
+    return _sandbox_instance
+
+def close_sandbox():
+    global _sandbox_instance
+    if _sandbox_instance is not None:
+        _sandbox_instance.kill()
+        _sandbox_instance = None
 
 def ask_user_approval(message: str) -> bool:
     user_approval = input(f"{message} (y/n): ")
@@ -44,28 +58,57 @@ def edit_file(filename: str, find_str: str, replace_str: str) -> str:
 
 
 @tool
-def run_command(command: str, working_dir: str) -> str:
-    """Run a shell command and return its output and error code."""
-    print(f"Executing command: {command} in {working_dir}")
-    if not ask_user_approval("Do you want to execute this command?"):
-        print("Command execution cancelled by user.")
-        return "Command execution cancelled by user."
-    
+def run_sandboxed_code(filename: str, language: str = "python") -> str:
+    """Run code from a local file in an isolated E2B cloud sandbox.
+    The file must exist locally (saved via edit_file first).
+    Returns stdout, stderr, exit code, and any artifacts.
+    Supported languages: python, javascript, typescript, r, java."""
     try:
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=working_dir,
-        )
-        output, _ = process.communicate()
-        if len(output) > 2000:
-            output = output[:1000] + "\n\n[...content clipped...]\n\n" + output[-1000:]
-        return f"Output:\n{output}\nReturn code: {process.returncode}"
+        with open(filename, "r", encoding="utf-8") as f:
+            code = f.read()
+    except FileNotFoundError:
+        return f"Error: File '{filename}' not found. Save the code with edit_file first.\nEXIT_CODE: 1"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error reading file '{filename}': {str(e)}\nEXIT_CODE: 1"
+
+    print(f"Running {language} code from {filename} in sandbox:\n```\n{code}\n```")
+    if not ask_user_approval("Do you want to run this code in the sandbox?"):
+        print("Sandbox execution cancelled by user.")
+        return "Sandbox execution cancelled by user."
+
+    try:
+        sbx = get_sandbox()
+        execution = sbx.run_code(code, language=language)
+
+        result_parts = []
+        if execution.logs.stdout:
+            stdout = "".join(execution.logs.stdout)
+            if len(stdout) > 2000:
+                stdout = stdout[:1000] + "\n\n[...clipped...]\n\n" + stdout[-1000:]
+            result_parts.append(f"STDOUT:\n{stdout}")
+        if execution.logs.stderr:
+            stderr = "".join(execution.logs.stderr)
+            if len(stderr) > 2000:
+                stderr = stderr[:1000] + "\n\n[...clipped...]\n\n" + stderr[-1000:]
+            result_parts.append(f"STDERR:\n{stderr}")
+        if execution.error:
+            result_parts.append(f"ERROR: {execution.error.name}: {execution.error.value}\n{execution.error.traceback}")
+        if execution.results:
+            artifact_summaries = []
+            for r in execution.results:
+                if r.png:
+                    artifact_summaries.append("[PNG image generated]")
+                elif r.text:
+                    artifact_summaries.append(f"Result: {r.text}")
+            if artifact_summaries:
+                result_parts.append("ARTIFACTS:\n" + "\n".join(artifact_summaries))
+
+        exit_code = 1 if execution.error else 0
+        result_parts.append(f"EXIT_CODE: {exit_code}")
+
+        return "\n".join(result_parts) if result_parts else "Code executed successfully with no output.\nEXIT_CODE: 0"
+    except Exception as e:
+        return f"Sandbox execution failed: {str(e)}\nEXIT_CODE: 1"
 
 @tool
 def list_directory(path: str = ".") -> str:
@@ -136,4 +179,4 @@ def validate_imports(code: str) -> str:
         return "Import issues:\n" + "\n".join(f"  - {i}" for i in issues)
     return "All imports are valid."
 
-tools = [edit_file, run_command, list_directory, read_file_content, validate_python_syntax, validate_imports]
+tools = [edit_file, run_sandboxed_code, list_directory, read_file_content, validate_python_syntax, validate_imports]

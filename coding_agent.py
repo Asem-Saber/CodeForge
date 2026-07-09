@@ -1,27 +1,48 @@
 import os
+import ast
+import json
+import uuid
 import operator
+import logging
 from typing import TypedDict, Annotated
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AnyMessage, AIMessage, ToolMessage
-from Tools import tools, close_sandbox
+from Tools import tools, close_sandbox, safe_path, _check_imports_raw
 
 from langgraph.graph import START, END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode, tools_condition
 
-load_dotenv() 
+load_dotenv()
 API_KEY = os.environ['API_KEY']
 ENDPOINT = os.environ['ENDPOINT']
-MODEL_ID = os.environ['MODEL_ID'] 
+MODEL_ID = os.environ['MODEL_ID']
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    filename="codeforge.log"
+)
+logger = logging.getLogger("codeforge")
+
+MAX_TURNS = 20
+MAX_RETRIES = 3
+TOKEN_BUDGET = 100_000
+
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     generated_code: Annotated[list[dict], operator.add]
     execution_results: Annotated[list[dict], operator.add]
     execution_errors: Annotated[list[dict], operator.add]
+    turn_count: int
+    total_tokens_used: int
+    retry_count: int
+    has_recent_error: bool
+
 
 system_prompt = """
 You are a helpful, extremely rigorous coding assistant. Your goal is to help the user with programming tasks while strictly enforcing safety and correctness.
@@ -44,7 +65,8 @@ EXECUTION ENVIRONMENT:
 - WORKFLOW: First save code to a file with `edit_file`, then run it with `run_sandboxed_code`.
 - NEVER pass raw code to `run_sandboxed_code` — it reads from the saved file.
 - The sandbox is persistent within a session — files created in one run are available in later runs.
-- Use `list_directory` and `read_file_content` for inspecting the LOCAL filesystem only.
+- All file operations are restricted to the workspace directory.
+- Use `list_directory` and `read_file_content` for inspecting files within the workspace.
 
 CRITICAL RULES FOR TESTING:
 - You MUST run and test your code using `run_sandboxed_code` BEFORE reporting success.
@@ -62,19 +84,91 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 llm = ChatOpenAI(
-    api_key=API_KEY, 
-    base_url=ENDPOINT, 
+    api_key=API_KEY,
+    base_url=ENDPOINT,
     model=MODEL_ID,
     temperature=0
 )
 llm = llm.bind_tools(tools)
 
 
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
 
 def call_model(state: AgentState):
     formatted_prompt = prompt.invoke({"messages": state["messages"]})
     response = llm.invoke(formatted_prompt)
-    return {"messages": [response]}
+
+    tokens = response.response_metadata.get("token_usage", {})
+    used = tokens.get("total_tokens", 0)
+    new_total = state.get("total_tokens_used", 0) + used
+    new_turn = state.get("turn_count", 0) + 1
+
+    logger.info("Turn %d | Tokens this call: %d | Total: %d", new_turn, used, new_total)
+
+    if new_total > TOKEN_BUDGET:
+        logger.warning("Token budget exceeded (%d / %d)", new_total, TOKEN_BUDGET)
+        return {
+            "messages": [AIMessage(content="Token budget exceeded. Stopping.")],
+            "total_tokens_used": new_total,
+            "turn_count": new_turn,
+        }
+
+    return {
+        "messages": [response],
+        "total_tokens_used": new_total,
+        "turn_count": new_turn,
+    }
+
+
+def validation_gate(state: AgentState):
+    """Intercept run_sandboxed_code calls and enforce validation before execution."""
+    last_msg = state["messages"][-1]
+    if not isinstance(last_msg, AIMessage) or not last_msg.tool_calls:
+        return {}
+
+    for tc in last_msg.tool_calls:
+        if tc["name"] != "run_sandboxed_code":
+            continue
+
+        filename = tc["args"].get("filename", "")
+        try:
+            target = safe_path(filename)
+            code = target.read_text()
+        except (FileNotFoundError, ValueError):
+            continue
+
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            logger.warning("Validation gate blocked %s: syntax error at line %d", filename, e.lineno)
+            return _block_all_tool_calls(
+                last_msg.tool_calls,
+                f"BLOCKED: Syntax error in {filename} at line {e.lineno}: {e.msg}. Fix the code and retry.",
+            )
+
+        issues = _check_imports_raw(code)
+        if issues:
+            logger.warning("Validation gate blocked %s: import issues", filename)
+            return _block_all_tool_calls(
+                last_msg.tool_calls,
+                f"BLOCKED: Import issues in {filename}: {'; '.join(issues)}. Fix the code and retry.",
+            )
+
+    return {}
+
+
+def _block_all_tool_calls(tool_calls, error_message):
+    """Return ToolMessages for all tool calls when validation blocks execution."""
+    return {"messages": [
+        ToolMessage(
+            content=error_message if tc["name"] == "run_sandboxed_code"
+            else "SKIPPED: Blocked due to validation failure in another tool call.",
+            tool_call_id=tc["id"],
+        )
+        for tc in tool_calls
+    ]}
 
 
 def process_execution(state: AgentState):
@@ -124,13 +218,12 @@ def process_execution(state: AgentState):
             args = tc["args"]
             filename = args.get("filename", "")
             content = message.content
-            exit_code = None
-            for line in content.split("\n"):
-                if line.startswith("EXIT_CODE:"):
-                    try:
-                        exit_code = int(line.split(":")[1].strip())
-                    except ValueError:
-                        exit_code = 1
+
+            try:
+                data = json.loads(content)
+                exit_code = data.get("exit_code", 1)
+            except json.JSONDecodeError:
+                exit_code = 1
 
             entry = {
                 "tool_call_id": message.tool_call_id,
@@ -154,58 +247,138 @@ def process_execution(state: AgentState):
         "generated_code": code_entries,
         "execution_results": results,
         "execution_errors": errors,
+        "has_recent_error": len(errors) > 0,
     }
 
+
+def retry_router(state: AgentState):
+    """Check execution results and manage retry count."""
+    has_error = state.get("has_recent_error", False)
+    retry_count = state.get("retry_count", 0)
+
+    if has_error:
+        new_retry = retry_count + 1
+        if new_retry > MAX_RETRIES:
+            logger.warning("Max retries exhausted (%d)", MAX_RETRIES)
+            return {
+                "messages": [AIMessage(
+                    content=f"Maximum retries ({MAX_RETRIES}) exhausted. Please review the errors and try a different approach."
+                )],
+                "retry_count": new_retry,
+            }
+        logger.info("Retrying after error (attempt %d/%d)", new_retry, MAX_RETRIES)
+        return {"retry_count": new_retry}
+
+    return {"retry_count": 0}
+
+
+# ---------------------------------------------------------------------------
+# Routing functions
+# ---------------------------------------------------------------------------
+
+def route_after_agent(state: AgentState):
+    if state.get("turn_count", 0) >= MAX_TURNS:
+        logger.warning("Max turns reached (%d)", MAX_TURNS)
+        return "__end__"
+    result = tools_condition(state)
+    if result == "__end__":
+        return "__end__"
+    return "validation_gate"
+
+
+def route_after_validation(state: AgentState):
+    last_msg = state["messages"][-1]
+    if isinstance(last_msg, ToolMessage):
+        return "agent"
+    return "tools"
+
+
+def route_after_retry(state: AgentState):
+    has_error = state.get("has_recent_error", False)
+    retry_count = state.get("retry_count", 0)
+    if has_error and retry_count > MAX_RETRIES:
+        return "__end__"
+    return "agent"
+
+
+# ---------------------------------------------------------------------------
+# Build the graph
+# ---------------------------------------------------------------------------
 
 workflow = StateGraph(AgentState)
 
 workflow.add_node("agent", call_model)
+workflow.add_node("validation_gate", validation_gate)
 workflow.add_node("tools", ToolNode(tools))
 workflow.add_node("process_execution", process_execution)
+workflow.add_node("retry_router", retry_router)
 
 workflow.add_edge(START, "agent")
 
-workflow.add_conditional_edges(
-    "agent",
-    tools_condition,
-)
+workflow.add_conditional_edges("agent", route_after_agent, {
+    "__end__": END,
+    "validation_gate": "validation_gate",
+})
+
+workflow.add_conditional_edges("validation_gate", route_after_validation, {
+    "agent": "agent",
+    "tools": "tools",
+})
 
 workflow.add_edge("tools", "process_execution")
-workflow.add_edge("process_execution", "agent")
+workflow.add_edge("process_execution", "retry_router")
+
+workflow.add_conditional_edges("retry_router", route_after_retry, {
+    "__end__": END,
+    "agent": "agent",
+})
 
 memory = MemorySaver()
 app = workflow.compile(checkpointer=memory)
 
-def loop(user_input: str):
-    config = {"configurable": {"thread_id": "main_coding_session"}}
 
-    print("-" * 50)
+def loop(user_input: str, session_id: str = None):
+    session_id = session_id or str(uuid.uuid4())
+    config = {"configurable": {"thread_id": session_id}}
+
+    logger.info("Session %s | User: %s", session_id, user_input[:80])
+
     for event in app.stream(
-        {"messages": [("user", user_input)], "generated_code": [], "execution_results": [], "execution_errors": []},
+        {
+            "messages": [("user", user_input)],
+            "generated_code": [],
+            "execution_results": [],
+            "execution_errors": [],
+            "turn_count": 0,
+            "retry_count": 0,
+            "has_recent_error": False,
+        },
         config=config,
         stream_mode="updates",
     ):
         for node_name, state_update in event.items():
-            print(f"--- Update from node: {node_name} ---")
+            if state_update is None:
+                continue
+            logger.debug("Update from node: %s", node_name)
             for message in state_update.get("messages", []):
                 message.pretty_print()
             if state_update.get("generated_code"):
                 for entry in state_update["generated_code"]:
-                    saved = f" → {entry['filename']}" if entry.get("filename") else ""
+                    saved = f" -> {entry['filename']}" if entry.get("filename") else ""
                     ran = f" [executed: {entry['execution_id']}]" if entry.get("execution_id") else ""
-                    print(f"[Code tracked: {entry['language']}{saved}{ran}]")
+                    logger.info("Code tracked: %s%s%s", entry["language"], saved, ran)
             if state_update.get("execution_errors"):
-                print(f"[Execution errors recorded: {len(state_update['execution_errors'])}]")
+                logger.warning("Execution errors recorded: %d", len(state_update["execution_errors"]))
             if state_update.get("execution_results"):
-                print(f"[Execution results recorded: {len(state_update['execution_results'])}]")
-            print("-" * 50)
+                logger.info("Execution results recorded: %d", len(state_update["execution_results"]))
+
 
 if __name__ == "__main__":
     try:
         while True:
             try:
                 user_input = input("How can I help you?\n")
-                if user_input.lower() in ['exit', 'quit']:
+                if user_input.lower() in ["exit", "quit"]:
                     break
                 loop(user_input)
             except KeyboardInterrupt:
@@ -214,4 +387,4 @@ if __name__ == "__main__":
                 break
     finally:
         close_sandbox()
-        print("Sandbox closed.")
+        logger.info("Sandbox closed.")

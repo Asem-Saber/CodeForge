@@ -1,39 +1,120 @@
 import ast
-import importlib.util
+import json
+import logging
 from langchain.tools import tool
 
+logger = logging.getLogger("codeforge")
 
-def _check_imports_raw(code: str) -> list[str]:
-    """Return list of import issues (empty if all OK)."""
+
+def _run_in_sandbox(python_code: str) -> tuple[int, str, str]:
+    """Run a Python snippet inside the Docker sandbox. Returns (exit_code, stdout, stderr)."""
+    from src.sandbox.manager import get_sandbox
+
+    container = get_sandbox()
+    exit_code, output = container.exec_run(
+        ["python", "-c", python_code],
+        demux=True,
+    )
+    stdout = output[0].decode("utf-8", errors="replace") if output[0] else ""
+    stderr = output[1].decode("utf-8", errors="replace") if output[1] else ""
+    return exit_code, stdout, stderr
+
+
+def _check_syntax_in_sandbox(code: str) -> str:
+    """Validate Python syntax inside the Docker sandbox."""
+    check_code = (
+        "import ast, json, sys\n"
+        "try:\n"
+        f"    ast.parse({repr(code)})\n"
+        '    print(json.dumps({"valid": True}))\n'
+        "except SyntaxError as e:\n"
+        '    print(json.dumps({"valid": False, "lineno": e.lineno, "msg": e.msg, "text": e.text}))\n'
+    )
+    exit_code, stdout, stderr = _run_in_sandbox(check_code)
+    if exit_code == 0 and stdout.strip():
+        result = json.loads(stdout.strip())
+        if result["valid"]:
+            return "Syntax is valid."
+        text = result.get("text") or ""
+        return f"Syntax error at line {result['lineno']}: {result['msg']}\n{text}"
+    return f"Sandbox syntax check failed: {stderr}"
+
+
+def _check_imports_in_sandbox(code: str) -> list[str]:
+    """Check if imports in code resolve to modules available in the Docker sandbox."""
+    modules = _extract_imports(code)
+    if not modules:
+        return []
+
+    check_code = (
+        "import importlib.util, json\n"
+        f"modules = {repr(modules)}\n"
+        "issues = []\n"
+        "for m in modules:\n"
+        "    top = m.split('.')[0]\n"
+        "    if not importlib.util.find_spec(top):\n"
+        "        issues.append(f\"Module '{m}' not found\")\n"
+        "print(json.dumps(issues))\n"
+    )
+    exit_code, stdout, stderr = _run_in_sandbox(check_code)
+    if exit_code == 0 and stdout.strip():
+        return json.loads(stdout.strip())
+    return []
+
+
+def _extract_imports(code: str) -> list[str]:
+    """Extract module names from import statements."""
     tree = ast.parse(code)
-    issues = []
+    modules = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                module = alias.name.split(".")[0]
-                if not importlib.util.find_spec(module):
-                    issues.append(f"Module '{alias.name}' not found")
+                modules.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
             if node.module:
-                module = node.module.split(".")[0]
-                if not importlib.util.find_spec(module):
-                    issues.append(f"Module '{node.module}' not found")
-    return issues
+                modules.append(node.module)
+    return modules
+
+
+def _check_imports_raw(code: str) -> list[str]:
+    """Check imports against the Docker sandbox environment.
+    Falls back to host-based check if Docker is unavailable (e.g. in tests)."""
+    modules = _extract_imports(code)
+    if not modules:
+        return []
+
+    try:
+        return _check_imports_in_sandbox(code)
+    except Exception as e:
+        logger.debug("Sandbox import check unavailable (%s), falling back to host", e)
+        import importlib.util
+        issues = []
+        for m in modules:
+            top = m.split(".")[0]
+            if not importlib.util.find_spec(top):
+                issues.append(f"Module '{m}' not found")
+        return issues
 
 
 @tool
 def validate_python_syntax(code: str) -> str:
-    """Validate that generated Python code is syntactically correct."""
+    """Validate that generated Python code is syntactically correct.
+    Runs the check inside the Docker sandbox to match the execution environment."""
     try:
-        ast.parse(code)
-        return "Syntax is valid."
-    except SyntaxError as e:
-        return f"Syntax error at line {e.lineno}: {e.msg}\n{e.text}"
+        return _check_syntax_in_sandbox(code)
+    except Exception as e:
+        logger.debug("Sandbox syntax check unavailable (%s), falling back to host", e)
+        try:
+            ast.parse(code)
+            return "Syntax is valid."
+        except SyntaxError as e:
+            return f"Syntax error at line {e.lineno}: {e.msg}\n{e.text}"
 
 
 @tool
 def validate_imports(code: str) -> str:
-    """Check that all imports in the generated code resolve to installed or local modules."""
+    """Check that all imports in the code resolve to modules available in the sandbox.
+    Runs the check inside the Docker sandbox to match the execution environment."""
     issues = _check_imports_raw(code)
     if issues:
         return "Import issues:\n" + "\n".join(f"  - {i}" for i in issues)

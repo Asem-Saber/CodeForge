@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codeforge"
+version = "0.1.0"
+description = "A coding agent that writes, validates and runs Python in an isolated Docker sandbox, pausing for approval before each write or execution."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Asem Saber" }]
+keywords = ["agent", "langgraph", "sandbox", "code-execution", "docker"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+
+# Version floors are the versions this is developed against; upper bounds keep
+# the fast-moving langchain stack from breaking on a major release.
+dependencies = [
+    "langgraph>=1.1.10,<2",
+    "langgraph-checkpoint-sqlite>=3.1.0,<4",
+    "langchain>=1.2.16,<2",
+    "langchain-core>=1.4.9,<2",
+    "langchain-openai>=1.2.1,<2",
+    "docker>=7.2.0,<8",
+    "rich>=13.9.4,<15",
+    "prompt-toolkit>=3.0.52,<4",
+    "python-dotenv>=1.2.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4,<9",
+    "Pillow>=10.0.1,<12",
+]
+# Lets scripts/render_thumbnail.py rasterize the SVG directly rather than
+# redrawing it with Pillow. Requires the native Cairo libraries.
+svg = ["cairosvg>=2.7,<3"]
+
+[project.scripts]
+codeforge = "main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+only-include = ["src", "main.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

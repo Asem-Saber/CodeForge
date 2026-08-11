@@ -1,0 +1,15 @@
+# Development and tooling dependencies.
+#   pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# Test suite
+pytest==8.3.4
+
+# Portfolio thumbnail rendering (scripts/render_thumbnail.py)
+Pillow==10.0.1
+
+# Optional: if present, render_thumbnail.py rasterizes the SVG directly
+# instead of redrawing the scene with Pillow. Needs the native Cairo
+# libraries, so it is left out by default.
+# cairosvg==2.7.1

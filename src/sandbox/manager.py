@@ -1,49 +1,95 @@
 import atexit
 import docker
 import logging
-from src.sandbox.paths import WORKSPACE
+from docker.errors import APIError, NotFound
+from src.sandbox.paths import normalize_session_id, session_workspace
 
 logger = logging.getLogger("codeforge")
 
 _client: docker.DockerClient | None = None
-_container = None
+_containers: dict = {}
+_atexit_registered = False
 
 SANDBOX_IMAGE = "codeforge-sandbox"
+CONTAINER_PREFIX = "codeforge-sbx-"
 
 
-def get_sandbox():
-    global _client, _container
-    if _container is None:
+def _get_client() -> docker.DockerClient:
+    global _client
+    if _client is None:
         _client = docker.from_env()
-        _container = _client.containers.run(
-            SANDBOX_IMAGE,
-            detach=True,
-            mem_limit="512m",
-            cpu_period=100000,
-            cpu_quota=50000,
-            network_mode="bridge",
-            security_opt=["no-new-privileges"],
-            cap_drop=["ALL"],
-            working_dir="/sandbox",
-            volumes={str(WORKSPACE): {"bind": "/sandbox", "mode": "rw"}},
-        )
-        atexit.register(close_sandbox)
-        logger.info("Docker sandbox started: %s", _container.short_id)
-    return _container
+    return _client
 
 
-def close_sandbox():
-    global _container
-    if _container is not None:
+def _container_name(session_id: str) -> str:
+    return f"{CONTAINER_PREFIX}{session_id}"
+
+
+def _start_container(session_id: str):
+    client = _get_client()
+    name = _container_name(session_id)
+    kwargs = dict(
+        detach=True,
+        name=name,
+        mem_limit="512m",
+        cpu_period=100000,
+        cpu_quota=50000,
+        network_mode="bridge",
+        security_opt=["no-new-privileges"],
+        cap_drop=["ALL"],
+        working_dir="/sandbox",
+        volumes={str(session_workspace(session_id)): {"bind": "/sandbox", "mode": "rw"}},
+        labels={"codeforge.session": session_id},
+    )
+    try:
+        return client.containers.run(SANDBOX_IMAGE, **kwargs)
+    except APIError as e:
+        if e.response is None or e.response.status_code != 409:
+            raise
+        # A container from a crashed run is squatting on the name — reclaim it.
+        logger.warning("Removing stale sandbox container %s", name)
         try:
-            _container.stop(timeout=5)
-            _container.remove()
-            logger.info("Docker sandbox stopped and removed.")
-        except Exception:
+            client.containers.get(name).remove(force=True)
+        except NotFound:
             pass
-        _container = None
+        return client.containers.run(SANDBOX_IMAGE, **kwargs)
 
 
-def ask_user_approval(message: str) -> bool:
-    user_approval = input(f"{message} (y/n): ")
-    return user_approval.lower() == "y"
+def get_sandbox(session_id: str | None = None):
+    """Return the Docker sandbox owned by a session, starting it on first use."""
+    global _atexit_registered
+    sid = normalize_session_id(session_id)
+
+    container = _containers.get(sid)
+    if container is not None:
+        return container
+
+    container = _start_container(sid)
+    _containers[sid] = container
+
+    if not _atexit_registered:
+        atexit.register(close_all_sandboxes)
+        _atexit_registered = True
+
+    logger.info("Docker sandbox started for session %s: %s", sid, container.short_id)
+    return container
+
+
+def close_sandbox(session_id: str | None = None):
+    """Stop and remove one session's sandbox."""
+    sid = normalize_session_id(session_id)
+    container = _containers.pop(sid, None)
+    if container is None:
+        return
+    try:
+        container.stop(timeout=5)
+        container.remove()
+        logger.info("Docker sandbox for session %s stopped and removed.", sid)
+    except Exception:
+        logger.debug("Failed to clean up sandbox for session %s", sid, exc_info=True)
+
+
+def close_all_sandboxes():
+    """Stop and remove every sandbox this process started."""
+    for sid in list(_containers):
+        close_sandbox(sid)

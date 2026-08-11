@@ -2,15 +2,17 @@ import ast
 import json
 import logging
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
+from src.sandbox.paths import session_id_from_config
 
 logger = logging.getLogger("codeforge")
 
 
-def _run_in_sandbox(python_code: str) -> tuple[int, str, str]:
+def _run_in_sandbox(python_code: str, session_id: str | None = None) -> tuple[int, str, str]:
     """Run a Python snippet inside the Docker sandbox. Returns (exit_code, stdout, stderr)."""
     from src.sandbox.manager import get_sandbox
 
-    container = get_sandbox()
+    container = get_sandbox(session_id)
     exit_code, output = container.exec_run(
         ["python", "-c", python_code],
         demux=True,
@@ -20,7 +22,7 @@ def _run_in_sandbox(python_code: str) -> tuple[int, str, str]:
     return exit_code, stdout, stderr
 
 
-def _check_syntax_in_sandbox(code: str) -> str:
+def _check_syntax_in_sandbox(code: str, session_id: str | None = None) -> str:
     """Validate Python syntax inside the Docker sandbox."""
     check_code = (
         "import ast, json, sys\n"
@@ -30,7 +32,7 @@ def _check_syntax_in_sandbox(code: str) -> str:
         "except SyntaxError as e:\n"
         '    print(json.dumps({"valid": False, "lineno": e.lineno, "msg": e.msg, "text": e.text}))\n'
     )
-    exit_code, stdout, stderr = _run_in_sandbox(check_code)
+    exit_code, stdout, stderr = _run_in_sandbox(check_code, session_id)
     if exit_code == 0 and stdout.strip():
         result = json.loads(stdout.strip())
         if result["valid"]:
@@ -40,7 +42,7 @@ def _check_syntax_in_sandbox(code: str) -> str:
     return f"Sandbox syntax check failed: {stderr}"
 
 
-def _check_imports_in_sandbox(code: str) -> list[str]:
+def _check_imports_in_sandbox(code: str, session_id: str | None = None) -> list[str]:
     """Check if imports in code resolve to modules available in the Docker sandbox."""
     modules = _extract_imports(code)
     if not modules:
@@ -56,7 +58,7 @@ def _check_imports_in_sandbox(code: str) -> list[str]:
         "        issues.append(f\"Module '{m}' not found\")\n"
         "print(json.dumps(issues))\n"
     )
-    exit_code, stdout, stderr = _run_in_sandbox(check_code)
+    exit_code, stdout, stderr = _run_in_sandbox(check_code, session_id)
     if exit_code == 0 and stdout.strip():
         return json.loads(stdout.strip())
     return []
@@ -76,7 +78,7 @@ def _extract_imports(code: str) -> list[str]:
     return modules
 
 
-def _check_imports_raw(code: str) -> list[str]:
+def _check_imports_raw(code: str, session_id: str | None = None) -> list[str]:
     """Check imports against the Docker sandbox environment.
     Falls back to host-based check if Docker is unavailable (e.g. in tests)."""
     modules = _extract_imports(code)
@@ -84,7 +86,7 @@ def _check_imports_raw(code: str) -> list[str]:
         return []
 
     try:
-        return _check_imports_in_sandbox(code)
+        return _check_imports_in_sandbox(code, session_id)
     except Exception as e:
         logger.debug("Sandbox import check unavailable (%s), falling back to host", e)
         import importlib.util
@@ -97,11 +99,11 @@ def _check_imports_raw(code: str) -> list[str]:
 
 
 @tool
-def validate_python_syntax(code: str) -> str:
+def validate_python_syntax(code: str, config: RunnableConfig = None) -> str:
     """Validate that generated Python code is syntactically correct.
     Runs the check inside the Docker sandbox to match the execution environment."""
     try:
-        return _check_syntax_in_sandbox(code)
+        return _check_syntax_in_sandbox(code, session_id_from_config(config))
     except Exception as e:
         logger.debug("Sandbox syntax check unavailable (%s), falling back to host", e)
         try:
@@ -112,10 +114,10 @@ def validate_python_syntax(code: str) -> str:
 
 
 @tool
-def validate_imports(code: str) -> str:
+def validate_imports(code: str, config: RunnableConfig = None) -> str:
     """Check that all imports in the code resolve to modules available in the sandbox.
     Runs the check inside the Docker sandbox to match the execution environment."""
-    issues = _check_imports_raw(code)
+    issues = _check_imports_raw(code, session_id_from_config(config))
     if issues:
         return "Import issues:\n" + "\n".join(f"  - {i}" for i in issues)
     return "All imports are valid."

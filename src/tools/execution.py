@@ -1,32 +1,31 @@
 import json
 import logging
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 from src.config import SANDBOX_TIMEOUT
-from src.sandbox.paths import safe_path
-from src.sandbox.manager import get_sandbox, ask_user_approval
+from src.sandbox.paths import safe_path, session_id_from_config
+from src.sandbox.manager import get_sandbox
 
 logger = logging.getLogger("codeforge")
 
 
 @tool
-def run_sandboxed_code(filename: str, language: str = "python") -> str:
+def run_sandboxed_code(filename: str, language: str = "python", config: RunnableConfig = None) -> str:
     """Run code from a workspace file in an isolated Docker sandbox container.
     The file must exist in the workspace (saved via edit_file first).
     Returns a JSON object with stdout, stderr, exit_code, error, and artifacts."""
+    session_id = session_id_from_config(config)
     try:
-        target = safe_path(filename)
+        target = safe_path(filename, session_id)
         if not target.exists():
             return json.dumps({"stdout": "", "stderr": f"File '{filename}' not found. Save the code with edit_file first.", "exit_code": 1, "error": "FileNotFoundError", "artifacts": []})
     except ValueError as e:
         return json.dumps({"stdout": "", "stderr": str(e), "exit_code": 1, "error": "PathError", "artifacts": []})
 
     logger.info("Running %s code from %s in sandbox", language, filename)
-    if not ask_user_approval(f"Do you want to run code from '{filename}' in the sandbox?"):
-        logger.info("Sandbox execution cancelled by user.")
-        return json.dumps({"stdout": "", "stderr": "Execution cancelled by user.", "exit_code": -1, "error": None, "artifacts": []})
 
     try:
-        container = get_sandbox()
+        container = get_sandbox(session_id)
         container_path = "/sandbox/" + filename.replace("\\", "/")
 
         exit_code, output = container.exec_run(

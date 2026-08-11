@@ -1,13 +1,15 @@
 import json
 import logging
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 from src.sandbox.manager import get_sandbox
+from src.sandbox.paths import session_id_from_config
 
 logger = logging.getLogger("codeforge")
 
 
 @tool
-def install_package(package_name: str) -> str:
+def install_package(package_name: str, config: RunnableConfig = None) -> str:
     """Install a Python package in the sandbox environment.
     Call this before running code that requires a package not in the base image.
     Pre-installed: numpy, pandas, matplotlib, requests, beautifulsoup4,
@@ -19,7 +21,7 @@ def install_package(package_name: str) -> str:
         return json.dumps({"success": False, "error": f"Invalid package name: {package_name}"})
 
     try:
-        container = get_sandbox()
+        container = get_sandbox(session_id_from_config(config))
         exit_code, output = container.exec_run(
             f"pip install --user --no-cache-dir {package_name}",
             demux=True,

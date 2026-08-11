@@ -1,18 +1,18 @@
 import os
 import logging
 from langchain.tools import tool
-from src.sandbox.paths import safe_path
-from src.sandbox.manager import ask_user_approval
+from langchain_core.runnables import RunnableConfig
+from src.sandbox.paths import safe_path, session_id_from_config
 
 logger = logging.getLogger("codeforge")
 
 
 @tool
-def edit_file(filename: str, find_str: str, replace_str: str) -> str:
+def edit_file(filename: str, find_str: str, replace_str: str, config: RunnableConfig = None) -> str:
     """Apply a diff to a file by replacing occurrences of find_str with replace_str. If find_str is empty and file doesn't exist, it creates the file. All paths are relative to the workspace directory."""
     logger.info("Editing file: %s", filename)
     try:
-        target = safe_path(filename)
+        target = safe_path(filename, session_id_from_config(config))
     except ValueError as e:
         return f"Error: {e}"
 
@@ -20,10 +20,6 @@ def edit_file(filename: str, find_str: str, replace_str: str) -> str:
         logger.debug("Content to find: %s", find_str[:100])
     if replace_str != "":
         logger.debug("Content to replace with: %s", replace_str[:100])
-
-    if not ask_user_approval(f"Do you want to edit file '{filename}'?"):
-        logger.info("File edit cancelled by user.")
-        return "File edit cancelled by user."
 
     if not target.exists() and find_str == "":
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -46,11 +42,11 @@ def edit_file(filename: str, find_str: str, replace_str: str) -> str:
 
 
 @tool
-def list_directory(path: str = ".") -> str:
+def list_directory(path: str = ".", config: RunnableConfig = None) -> str:
     """List the contents of a directory within the workspace."""
     logger.info("Listing directory: %s", path)
     try:
-        target = safe_path(path)
+        target = safe_path(path, session_id_from_config(config))
     except ValueError as e:
         return f"Error: {e}"
     try:
@@ -72,11 +68,11 @@ def list_directory(path: str = ".") -> str:
 
 
 @tool
-def read_file_content(path: str) -> str:
+def read_file_content(path: str, config: RunnableConfig = None) -> str:
     """Read and return the content of a file within the workspace."""
     logger.info("Reading file: %s", path)
     try:
-        target = safe_path(path)
+        target = safe_path(path, session_id_from_config(config))
     except ValueError as e:
         return f"Error: {e}"
     try:

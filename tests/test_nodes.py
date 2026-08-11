@@ -3,17 +3,26 @@ import pytest
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 
+import src.agent.nodes as nodes_module
+import src.sandbox.paths as paths_module
 from src.agent.state import AgentState
 from src.agent.nodes import (
     process_execution,
     retry_router,
     validation_gate,
+    approval_gate,
     _block_all_tool_calls,
+    _resolve_approval,
+    _describe_tool_call,
     route_after_agent,
     route_after_validation,
+    route_after_approval,
     route_after_retry,
 )
 from src.config import MAX_TURNS, MAX_RETRIES
+
+SESSION = "test-session"
+CONFIG = {"configurable": {"thread_id": SESSION}}
 
 
 # ---------------------------------------------------------------------------
@@ -60,10 +69,23 @@ class TestRouteAfterValidation:
         state = {"messages": [ToolMessage(content="BLOCKED", tool_call_id="1")]}
         assert route_after_validation(state) == "agent"
 
-    def test_routes_to_tools_when_passed(self):
+    def test_routes_to_approval_gate_when_passed(self):
         ai = make_ai_message_with_tool_calls([{"id": "1", "name": "edit_file", "args": {}}])
         state = {"messages": [ai]}
-        assert route_after_validation(state) == "tools"
+        assert route_after_validation(state) == "approval_gate"
+
+
+# route_after_approval
+
+class TestRouteAfterApproval:
+    def test_routes_to_agent_when_denied(self):
+        state = {"messages": [ToolMessage(content="CANCELLED", tool_call_id="1")]}
+        assert route_after_approval(state) == "agent"
+
+    def test_routes_to_tools_when_approved(self):
+        ai = make_ai_message_with_tool_calls([{"id": "1", "name": "edit_file", "args": {}}])
+        state = {"messages": [ai]}
+        assert route_after_approval(state) == "tools"
 
 
 # ---------------------------------------------------------------------------
@@ -123,36 +145,187 @@ class TestValidationGate:
         assert validation_gate(state) == {}
 
     def test_blocks_file_with_syntax_error(self, tmp_path, monkeypatch):
-        import src.sandbox.paths as p
-        monkeypatch.setattr(p, "WORKSPACE", tmp_path)
-        (tmp_path / "bad.py").write_text("def foo(\n")
+        monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", tmp_path)
+        paths_module.session_workspace(SESSION).joinpath("bad.py").write_text("def foo(\n")
 
         ai = make_ai_message_with_tool_calls([
             {"id": "1", "name": "run_sandboxed_code", "args": {"filename": "bad.py"}}
         ])
         state = {"messages": [ai]}
-        result = validation_gate(state)
+        result = validation_gate(state, CONFIG)
         assert "messages" in result
         assert "BLOCKED" in result["messages"][0].content
         assert "Syntax error" in result["messages"][0].content
 
     def test_passes_valid_file(self, tmp_path, monkeypatch):
-        import src.sandbox.paths as p
-        monkeypatch.setattr(p, "WORKSPACE", tmp_path)
-        (tmp_path / "good.py").write_text("print('hello')")
+        monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", tmp_path)
+        paths_module.session_workspace(SESSION).joinpath("good.py").write_text("print('hello')")
 
         ai = make_ai_message_with_tool_calls([
             {"id": "1", "name": "run_sandboxed_code", "args": {"filename": "good.py"}}
         ])
         state = {"messages": [ai]}
-        assert validation_gate(state) == {}
+        assert validation_gate(state, CONFIG) == {}
 
-    def test_skips_missing_file(self):
+    def test_reads_the_calling_session_workspace(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", tmp_path)
+        # Broken file belongs to another session, so this session must not see it.
+        paths_module.session_workspace("other").joinpath("bad.py").write_text("def foo(\n")
+
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "run_sandboxed_code", "args": {"filename": "bad.py"}}
+        ])
+        assert validation_gate({"messages": [ai]}, CONFIG) == {}
+
+    def test_skips_missing_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", tmp_path)
         ai = make_ai_message_with_tool_calls([
             {"id": "1", "name": "run_sandboxed_code", "args": {"filename": "nonexistent.py"}}
         ])
         state = {"messages": [ai]}
-        assert validation_gate(state) == {}
+        assert validation_gate(state, CONFIG) == {}
+
+
+# approval_gate
+
+class TestApprovalGate:
+    @pytest.fixture
+    def approve(self, monkeypatch):
+        """Stand in for interrupt(), capturing the payload and replying with a decision."""
+        captured = {}
+
+        def fake_interrupt_factory(decision):
+            def fake_interrupt(payload):
+                captured["payload"] = payload
+                return decision
+            return fake_interrupt
+
+        def install(decision):
+            monkeypatch.setattr(nodes_module, "interrupt", fake_interrupt_factory(decision))
+            return captured
+
+        return install
+
+    def test_passes_when_no_tool_calls(self, approve):
+        approve(True)
+        state = {"messages": [AIMessage(content="hello")]}
+        assert approval_gate(state) == {}
+
+    def test_passes_when_no_approval_needed(self, approve):
+        approve(False)
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "read_file_content", "args": {"path": "a.py"}}
+        ])
+        # Read-only tools must not pause the graph at all.
+        assert approval_gate({"messages": [ai]}) == {}
+
+    def test_proceeds_when_approved(self, approve):
+        approve(True)
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x = 1"}}
+        ])
+        assert approval_gate({"messages": [ai]}) == {}
+
+    def test_cancels_when_denied(self, approve):
+        approve(False)
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x = 1"}}
+        ])
+        result = approval_gate({"messages": [ai]})
+        assert len(result["messages"]) == 1
+        assert "CANCELLED" in result["messages"][0].content
+        assert result["messages"][0].tool_call_id == "1"
+
+    def test_denial_answers_every_pending_tool_call(self, approve):
+        approve(False)
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x"}},
+            {"id": "2", "name": "read_file_content", "args": {"path": "b.py"}},
+        ])
+        result = approval_gate({"messages": [ai]})
+        # Every tool call needs a reply or the model sees a dangling call.
+        assert {m.tool_call_id for m in result["messages"]} == {"1", "2"}
+        assert "CANCELLED" in result["messages"][0].content
+        assert "SKIPPED" in result["messages"][1].content
+
+    def test_partial_denial_blocks_the_batch(self, approve):
+        approve({"1": True, "2": False})
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x"}},
+            {"id": "2", "name": "run_sandboxed_code", "args": {"filename": "a.py"}},
+        ])
+        result = approval_gate({"messages": [ai]})
+        assert len(result["messages"]) == 2
+        assert "SKIPPED" in result["messages"][0].content
+        assert "CANCELLED" in result["messages"][1].content
+
+    def test_payload_describes_pending_actions(self, approve):
+        captured = approve(True)
+        ai = make_ai_message_with_tool_calls([
+            {"id": "1", "name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x = 1"}},
+            {"id": "2", "name": "read_file_content", "args": {"path": "b.py"}},
+        ])
+        approval_gate({"messages": [ai]})
+        payload = captured["payload"]
+        assert payload["type"] == "approval_request"
+        assert len(payload["requests"]) == 1
+        assert payload["requests"][0]["tool_call_id"] == "1"
+        assert "a.py" in payload["requests"][0]["description"]
+
+
+# _resolve_approval
+
+class TestResolveApproval:
+    PENDING = [{"id": "1", "name": "edit_file", "args": {}}]
+
+    def test_true_approves(self):
+        assert _resolve_approval(True, self.PENDING) == {"1": True}
+
+    def test_false_denies(self):
+        assert _resolve_approval(False, self.PENDING) == {"1": False}
+
+    @pytest.mark.parametrize("answer", ["y", "yes", "Approve", " TRUE "])
+    def test_affirmative_strings(self, answer):
+        assert _resolve_approval(answer, self.PENDING) == {"1": True}
+
+    @pytest.mark.parametrize("answer", ["n", "no", "", "maybe"])
+    def test_other_strings_deny(self, answer):
+        assert _resolve_approval(answer, self.PENDING) == {"1": False}
+
+    def test_per_call_mapping(self):
+        pending = [{"id": "1"}, {"id": "2"}]
+        assert _resolve_approval({"1": True, "2": False}, pending) == {"1": True, "2": False}
+
+    def test_mapping_defaults_missing_ids_to_denied(self):
+        assert _resolve_approval({}, self.PENDING) == {"1": False}
+
+    @pytest.mark.parametrize("value", [None, 1, object()])
+    def test_unrecognized_values_fail_closed(self, value):
+        assert _resolve_approval(value, self.PENDING) == {"1": False}
+
+
+# _describe_tool_call
+
+class TestDescribeToolCall:
+    def test_create_reads_as_create(self):
+        tc = {"name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "x = 1"}}
+        description = _describe_tool_call(tc)
+        assert description.startswith("create a.py")
+        assert "x = 1" in description
+
+    def test_modify_reads_as_modify(self):
+        tc = {"name": "edit_file", "args": {"filename": "a.py", "find_str": "x", "replace_str": "y"}}
+        assert _describe_tool_call(tc).startswith("modify a.py")
+
+    def test_truncates_long_bodies(self):
+        tc = {"name": "edit_file", "args": {"filename": "a.py", "find_str": "", "replace_str": "A" * 5000}}
+        description = _describe_tool_call(tc)
+        assert "[...truncated...]" in description
+        assert len(description) < 600
+
+    def test_describes_sandbox_run(self):
+        tc = {"name": "run_sandboxed_code", "args": {"filename": "a.py", "language": "python"}}
+        assert "run a.py" in _describe_tool_call(tc)
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ MAX_RETRIES = 3
 TOKEN_BUDGET = 100_000
 SANDBOX_TIMEOUT = 60
 
+CHECKPOINT_DB = os.environ.get("CHECKPOINT_DB", "checkpoints.sqlite")
+
 pathlib.Path("logs").mkdir(exist_ok=True)
 
 logging.basicConfig(

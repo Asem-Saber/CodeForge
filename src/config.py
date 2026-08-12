@@ -5,6 +5,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+for _name in ("API_KEY", "LANGSMITH_API_KEY"):
+    _path = os.environ.get(f"{_name}_FILE")
+    if _path:
+        _value = pathlib.Path(_path).read_text(encoding="utf-8").strip()
+        if _value:
+            os.environ[_name] = _value
+
 API_KEY = os.environ["API_KEY"]
 ENDPOINT = os.environ["ENDPOINT"]
 MODEL_ID = os.environ["MODEL_ID"]

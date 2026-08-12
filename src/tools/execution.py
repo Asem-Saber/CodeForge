@@ -10,7 +10,7 @@ logger = logging.getLogger("codeforge")
 
 
 @tool
-def run_sandboxed_code(filename: str, language: str = "python", config: RunnableConfig = None) -> str:
+def run_sandboxed_code(filename: str, language: str = "python", *, config: RunnableConfig) -> str:
     """Run code from a workspace file in an isolated Docker sandbox container.
     The file must exist in the workspace (saved via edit_file first).
     Returns a JSON object with stdout, stderr, exit_code, error, and artifacts."""

@@ -8,7 +8,7 @@ logger = logging.getLogger("codeforge")
 
 
 @tool
-def edit_file(filename: str, find_str: str, replace_str: str, config: RunnableConfig = None) -> str:
+def edit_file(filename: str, find_str: str, replace_str: str, config: RunnableConfig) -> str:
     """Apply a diff to a file by replacing occurrences of find_str with replace_str. If find_str is empty and file doesn't exist, it creates the file. All paths are relative to the workspace directory."""
     logger.info("Editing file: %s", filename)
     try:
@@ -42,7 +42,7 @@ def edit_file(filename: str, find_str: str, replace_str: str, config: RunnableCo
 
 
 @tool
-def list_directory(path: str = ".", config: RunnableConfig = None) -> str:
+def list_directory(path: str = ".", *, config: RunnableConfig) -> str:
     """List the contents of a directory within the workspace."""
     logger.info("Listing directory: %s", path)
     try:
@@ -68,7 +68,7 @@ def list_directory(path: str = ".", config: RunnableConfig = None) -> str:
 
 
 @tool
-def read_file_content(path: str, config: RunnableConfig = None) -> str:
+def read_file_content(path: str, config: RunnableConfig) -> str:
     """Read and return the content of a file within the workspace."""
     logger.info("Reading file: %s", path)
     try:

@@ -9,7 +9,7 @@ logger = logging.getLogger("codeforge")
 
 
 @tool
-def install_package(package_name: str, config: RunnableConfig = None) -> str:
+def install_package(package_name: str, config: RunnableConfig) -> str:
     """Install a Python package in the sandbox environment.
     Call this before running code that requires a package not in the base image.
     Pre-installed: numpy, pandas, matplotlib, requests, beautifulsoup4,

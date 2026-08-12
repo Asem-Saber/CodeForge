@@ -99,7 +99,7 @@ def _check_imports_raw(code: str, session_id: str | None = None) -> list[str]:
 
 
 @tool
-def validate_python_syntax(code: str, config: RunnableConfig = None) -> str:
+def validate_python_syntax(code: str, config: RunnableConfig) -> str:
     """Validate that generated Python code is syntactically correct.
     Runs the check inside the Docker sandbox to match the execution environment."""
     try:
@@ -114,7 +114,7 @@ def validate_python_syntax(code: str, config: RunnableConfig = None) -> str:
 
 
 @tool
-def validate_imports(code: str, config: RunnableConfig = None) -> str:
+def validate_imports(code: str, config: RunnableConfig) -> str:
     """Check that all imports in the code resolve to modules available in the sandbox.
     Runs the check inside the Docker sandbox to match the execution environment."""
     issues = _check_imports_raw(code, session_id_from_config(config))

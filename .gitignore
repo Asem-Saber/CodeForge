@@ -3,3 +3,6 @@ __pycache__/
 logs/
 workspace/
 *.sqlite
+data/
+secrets/*
+!secrets/.gitkeep

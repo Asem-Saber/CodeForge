@@ -1,0 +1,63 @@
+services:
+  codeforge:
+    build:
+      context: .
+    image: codeforge
+    init: true
+    stdin_open: true
+    tty: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    group_add:
+      - "0"
+    mem_limit: 1g
+    cpus: 1.0
+    secrets:
+      - api_key
+      - langsmith_api_key
+    environment:
+      API_KEY_FILE: /run/secrets/api_key
+      LANGSMITH_API_KEY_FILE: /run/secrets/langsmith_api_key
+      ENDPOINT: https://openrouter.ai/api/v1
+      MODEL_ID: openai/gpt-4o-mini
+      LANGSMITH_TRACING: "true"
+      LANGSMITH_ENDPOINT: https://api.smith.langchain.com
+      LANGSMITH_PROJECT: CodeForge
+      HOST_WORKSPACE_ROOT: F:/Career/Projects/CodeForge/workspace
+      CHECKPOINT_DB: /app/data/checkpoints.sqlite
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - F:/Career/Projects/CodeForge/workspace:/app/workspace
+      - ./data:/app/data
+      - ./logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+
+  sandbox-image:
+    build:
+      context: ./sandbox
+    image: codeforge-sandbox
+    entrypoint: [ "true" ]
+    restart: "no"
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  api_key:
+    file: ./secrets/api_key
+  langsmith_api_key:
+    file: ./secrets/langsmith_api_key

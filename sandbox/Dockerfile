@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 RUN apt-get update && \
@@ -6,7 +7,9 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir \
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
     numpy \
     pandas \
     matplotlib \

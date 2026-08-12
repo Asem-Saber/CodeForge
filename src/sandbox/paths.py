@@ -1,3 +1,4 @@
+import os
 import pathlib
 
 WORKSPACE_ROOT = pathlib.Path("./workspace").resolve()
@@ -27,6 +28,21 @@ def session_workspace(session_id: str | None = None) -> pathlib.Path:
         raise ValueError(f"Session workspace escapes root: {session_id!r}")
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def sandbox_bind_source(session_id: str | None = None) -> str:
+    """Path the Docker daemon can bind-mount as this session's workspace.
+
+    When CodeForge itself runs in a container, session_workspace() resolves to
+    a container-local path the host daemon can't see. HOST_WORKSPACE_ROOT names
+    the host directory mounted at WORKSPACE_ROOT, so sandbox binds are rewritten
+    under it. Unset means the app and daemon share a filesystem.
+    """
+    workspace = session_workspace(session_id)
+    host_root = os.environ.get("HOST_WORKSPACE_ROOT")
+    if not host_root:
+        return str(workspace)
+    return f"{host_root.rstrip('/')}/{workspace.name}"
 
 
 def safe_path(filename: str, session_id: str | None = None) -> pathlib.Path:

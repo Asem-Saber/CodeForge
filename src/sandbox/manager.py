@@ -2,7 +2,7 @@ import atexit
 import docker
 import logging
 from docker.errors import APIError, NotFound
-from src.sandbox.paths import normalize_session_id, session_workspace
+from src.sandbox.paths import normalize_session_id, sandbox_bind_source
 
 logger = logging.getLogger("codeforge")
 
@@ -38,7 +38,7 @@ def _start_container(session_id: str):
         security_opt=["no-new-privileges"],
         cap_drop=["ALL"],
         working_dir="/sandbox",
-        volumes={str(session_workspace(session_id)): {"bind": "/sandbox", "mode": "rw"}},
+        volumes={sandbox_bind_source(session_id): {"bind": "/sandbox", "mode": "rw"}},
         labels={"codeforge.session": session_id},
     )
     try:
@@ -46,7 +46,6 @@ def _start_container(session_id: str):
     except APIError as e:
         if e.response is None or e.response.status_code != 409:
             raise
-        # A container from a crashed run is squatting on the name — reclaim it.
         logger.warning("Removing stale sandbox container %s", name)
         try:
             client.containers.get(name).remove(force=True)

@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir \
     pillow \
     tabulate \
     fastapi \
-    httpx
+    httpx \
+    pytest
 
 RUN groupadd -r sandbox && \
     useradd -r -g sandbox -d /sandbox -s /usr/sbin/nologin sandbox

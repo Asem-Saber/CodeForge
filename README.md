@@ -79,14 +79,14 @@ The agent itself is a LangGraph state machine. A turn walks this path:
 
 ```mermaid
 flowchart TD
-    START([user message]) --> agent[agent<br/>call model]
+    START([user message]) --> agent["agent — call model"]
     agent -->|no tool calls / limit hit| END([done])
-    agent -->|tool calls| validation[validation gate<br/>ast parse + import check]
+    agent -->|tool calls| validation["validation gate — ast parse + import check"]
     validation -->|blocked| agent
-    validation -->|clean| approval[approval gate<br/>interrupt: human decides]
+    validation -->|clean| approval["approval gate — interrupt, human decides"]
     approval -->|declined| agent
-    approval -->|approved| tools[tool node<br/>edit / run / install / read]
-    tools --> process[process execution<br/>collect results and errors]
+    approval -->|approved| tools["tool node — edit / run / install / read"]
+    tools --> process["process execution — collect results and errors"]
     process --> retry{retry router}
     retry -->|error, attempts left| agent
     retry -->|error, 3 attempts used| END

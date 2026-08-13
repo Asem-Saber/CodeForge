@@ -202,6 +202,24 @@ python main.py --list
 python main.py --session <session-id>
 ```
 
+### Slash commands
+
+Once the REPL is up, anything starting with `/` is handled locally instead of
+being sent to the model:
+
+| Command | Does |
+| --- | --- |
+| `/help` | show this list |
+| `/sessions` | list saved sessions |
+| `/files` | list files in this session's workspace |
+| `/cost` | show turn and token usage |
+| `/new` | start a fresh session |
+| `/exit` | quit |
+
+`/quit` is an alias for `/exit`, and bare `exit` or `quit` work too. `Ctrl+C`
+clears the current line or interrupts a running turn; `Ctrl+D` leaves. On the way
+out CodeForge stops the sandbox and prints the command to resume the session.
+
 Run the tests:
 
 ```bash

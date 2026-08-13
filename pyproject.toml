@@ -49,3 +49,6 @@ only-include = ["src", "main.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: drives a real Docker sandbox; skipped unless the daemon is reachable and the codeforge-sandbox image exists",
+]

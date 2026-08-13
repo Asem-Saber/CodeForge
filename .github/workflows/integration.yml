@@ -1,0 +1,73 @@
+name: Integration
+
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - "src/**"
+            - "tests/**"
+            - "sandbox/**"
+            - "requirements.txt"
+            - "pyproject.toml"
+            - ".github/workflows/integration.yml"
+    pull_request:
+        branches:
+            - main
+        paths:
+            - "src/**"
+            - "tests/**"
+            - "sandbox/**"
+            - "requirements.txt"
+            - "pyproject.toml"
+            - ".github/workflows/integration.yml"
+
+permissions:
+    contents: read
+
+jobs:
+    sandbox:
+        name: Sandbox integration
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@v4
+
+            - name: Build sandbox image
+              uses: docker/build-push-action@v7
+              with:
+                  context: ./sandbox
+                  tags: codeforge-sandbox
+                  load: true
+                  push: false
+                  cache-from: type=gha,scope=sandbox
+                  cache-to: type=gha,mode=max,scope=sandbox
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+                  cache: pip
+
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install ".[dev]"
+
+            - name: Run integration tests
+              run: pytest -m integration -q
+
+            - name: Check for leaked sandbox containers
+              if: always()
+              run: |
+                  leaked=$(docker ps -aq --filter "label=codeforge.session")
+                  if [ -n "$leaked" ]; then
+                      echo "Sandbox containers outlived the test run:"
+                      docker ps -a --filter "label=codeforge.session"
+                      docker rm -f $leaked
+                      exit 1
+                  fi

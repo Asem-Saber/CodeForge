@@ -51,4 +51,5 @@ only-include = ["src", "main.py"]
 testpaths = ["tests"]
 markers = [
     "integration: drives a real Docker sandbox; skipped unless the daemon is reachable and the codeforge-sandbox image exists",
+    "e2e: runs the graph end to end, against a real sandbox or a stub completions server",
 ]

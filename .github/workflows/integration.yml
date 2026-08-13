@@ -58,8 +58,8 @@ jobs:
                   python -m pip install --upgrade pip
                   pip install ".[dev]"
 
-            - name: Run integration tests
-              run: pytest -m integration -q
+            - name: Run integration and e2e tests
+              run: pytest -m "integration or e2e" -q
 
             - name: Check for leaked sandbox containers
               if: always()

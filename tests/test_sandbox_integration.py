@@ -6,18 +6,12 @@ stays offline. Build the image with `docker compose build sandbox-image`.
 """
 
 import json
-import pathlib
-import shutil
-import stat
-import tempfile
 import uuid
 
-import docker
 import pytest
 from docker.errors import NotFound
 
 import src.sandbox.manager as manager
-import src.sandbox.paths as paths_module
 from src.sandbox.manager import (
     CONTAINER_PREFIX,
     SANDBOX_IMAGE,
@@ -33,37 +27,8 @@ from src.tools.validation import validate_imports, validate_python_syntax
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(scope="session")
-def docker_client():
-    try:
-        client = docker.from_env()
-        client.ping()
-    except Exception as e:
-        pytest.skip(f"Docker daemon unreachable: {e}")
-    try:
-        client.images.get(SANDBOX_IMAGE)
-    except Exception:
-        pytest.skip(f"Image {SANDBOX_IMAGE!r} not built")
-    return client
-
-
 @pytest.fixture
-def workspace_root(monkeypatch):
-    """A workspace root the sandbox user can traverse.
-
-    pytest's tmp_path sits under a 0700 base directory, so the container's
-    non-root user cannot reach a bind mount pointing into it.
-    """
-    root = pathlib.Path(tempfile.mkdtemp(prefix="codeforge-integration-"))
-    root.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-    monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", root)
-    monkeypatch.delenv("HOST_WORKSPACE_ROOT", raising=False)
-    yield root
-    shutil.rmtree(root, ignore_errors=True)
-
-
-@pytest.fixture
-def session_id(docker_client, workspace_root):
+def session_id(docker_client, sandbox_workspace_root):
     """A throwaway session, torn down even when the test fails."""
     sid = f"itest-{uuid.uuid4().hex[:8]}"
     manager._containers.pop(sid, None)

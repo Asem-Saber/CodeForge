@@ -16,8 +16,6 @@ from src.agent.state import AgentState
 
 logger = logging.getLogger("codeforge")
 
-# Tools whose side effects leave the agent's sandbox reasoning and touch the
-# user's workspace or execute code — these need explicit human sign-off.
 APPROVAL_REQUIRED = {"edit_file", "run_sandboxed_code"}
 
 llm = ChatOpenAI(
@@ -25,20 +23,19 @@ llm = ChatOpenAI(
     base_url=ENDPOINT,
     model=MODEL_ID,
     temperature=0,
+    stream_usage=True,
 )
 llm = llm.bind_tools(tools)
 
 
-# ---------------------------------------------------------------------------
 # Graph nodes
-# ---------------------------------------------------------------------------
 
 def call_model(state: AgentState):
     formatted_prompt = prompt.invoke({"messages": state["messages"]})
     response = llm.invoke(formatted_prompt)
 
-    tokens = response.response_metadata.get("token_usage", {})
-    used = tokens.get("total_tokens", 0)
+    usage = response.usage_metadata or response.response_metadata.get("token_usage", {})
+    used = usage.get("total_tokens", 0)
     new_total = state.get("total_tokens_used", 0) + used
     new_turn = state.get("turn_count", 0) + 1
 
@@ -287,9 +284,7 @@ def retry_router(state: AgentState):
     return {"retry_count": 0}
 
 
-# ---------------------------------------------------------------------------
 # Routing functions
-# ---------------------------------------------------------------------------
 
 def route_after_agent(state: AgentState):
     if state.get("turn_count", 0) >= MAX_TURNS:

@@ -32,7 +32,6 @@ from src.service.events import (
 
 logger = logging.getLogger("codeforge")
 
-# Tool results that are failures despite the tool returning normally.
 _FAILURE_PREFIXES = ("Error", "BLOCKED", "CANCELLED", "SKIPPED")
 
 
@@ -81,7 +80,6 @@ class Session:
 
     def _token_event(self, chunk, streamed_ids: set[str]) -> Event | None:
         message, _metadata = chunk
-        # "messages" mode streams tool output too; only model text is a token.
         if not isinstance(message, AIMessage):
             return None
         text = _text_of(message)
@@ -94,7 +92,7 @@ class Session:
     def _update_events(self, chunk: dict, streamed_ids: set[str]) -> Iterator[Event]:
         for node_name, state_update in chunk.items():
             if not isinstance(state_update, dict):
-                continue  # e.g. the __interrupt__ marker
+                continue  
 
             for message in state_update.get("messages", []):
                 yield from _message_events(message, streamed_ids)
@@ -220,7 +218,6 @@ def list_sessions() -> list[SessionInfo]:
             continue
         seen.add(session_id)
 
-        # Resolved per call: the workspace root is patchable at runtime.
         workspace = paths.WORKSPACE_ROOT / session_id
         has_workspace = workspace.is_dir()
         files = (
@@ -250,7 +247,6 @@ def _text_of(message) -> str:
     content = getattr(message, "content", "")
     if isinstance(content, str):
         return content
-    # Some providers return content as a list of blocks.
     return "".join(
         block.get("text", "")
         for block in content

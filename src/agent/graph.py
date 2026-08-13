@@ -53,8 +53,6 @@ workflow.add_conditional_edges("retry_router", route_after_retry, {
     "agent": "agent",
 })
 
-# check_same_thread=False so a web server can resume a thread from a different
-# worker thread than the one that created it.
 _conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
 checkpointer = SqliteSaver(_conn)
 app = workflow.compile(checkpointer=checkpointer)

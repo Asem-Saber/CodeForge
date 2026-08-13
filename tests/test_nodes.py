@@ -25,9 +25,7 @@ SESSION = "test-session"
 CONFIG = {"configurable": {"thread_id": SESSION}}
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def make_ai_message_with_tool_calls(tool_calls):
     msg = AIMessage(content="")
@@ -38,11 +36,7 @@ def make_ai_message_with_tool_calls(tool_calls):
 def make_tool_message(tool_call_id, content):
     return ToolMessage(content=content, tool_call_id=tool_call_id)
 
-
-# ---------------------------------------------------------------------------
 # route_after_agent
-# ---------------------------------------------------------------------------
-
 class TestRouteAfterAgent:
     def test_ends_when_max_turns_reached(self):
         state = {"messages": [AIMessage(content="done")], "turn_count": MAX_TURNS}
@@ -60,9 +54,7 @@ class TestRouteAfterAgent:
         assert route_after_agent(state) == "validation_gate"
 
 
-# ---------------------------------------------------------------------------
 # route_after_validation
-# ---------------------------------------------------------------------------
 
 class TestRouteAfterValidation:
     def test_routes_to_agent_when_blocked(self):
@@ -88,9 +80,7 @@ class TestRouteAfterApproval:
         assert route_after_approval(state) == "tools"
 
 
-# ---------------------------------------------------------------------------
 # route_after_retry
-# ---------------------------------------------------------------------------
 
 class TestRouteAfterRetry:
     def test_continues_when_no_error(self):
@@ -106,9 +96,7 @@ class TestRouteAfterRetry:
         assert route_after_retry(state) == "__end__"
 
 
-# ---------------------------------------------------------------------------
 # _block_all_tool_calls
-# ---------------------------------------------------------------------------
 
 class TestBlockAllToolCalls:
     def test_returns_tool_messages_for_each_call(self):
@@ -128,10 +116,7 @@ class TestBlockAllToolCalls:
         assert result["messages"][0].tool_call_id == "x"
 
 
-# ---------------------------------------------------------------------------
 # validation_gate
-# ---------------------------------------------------------------------------
-
 class TestValidationGate:
     def test_passes_when_no_tool_calls(self):
         state = {"messages": [AIMessage(content="hello")]}
@@ -169,7 +154,6 @@ class TestValidationGate:
 
     def test_reads_the_calling_session_workspace(self, tmp_path, monkeypatch):
         monkeypatch.setattr(paths_module, "WORKSPACE_ROOT", tmp_path)
-        # Broken file belongs to another session, so this session must not see it.
         paths_module.session_workspace("other").joinpath("bad.py").write_text("def foo(\n")
 
         ai = make_ai_message_with_tool_calls([
@@ -216,7 +200,6 @@ class TestApprovalGate:
         ai = make_ai_message_with_tool_calls([
             {"id": "1", "name": "read_file_content", "args": {"path": "a.py"}}
         ])
-        # Read-only tools must not pause the graph at all.
         assert approval_gate({"messages": [ai]}) == {}
 
     def test_proceeds_when_approved(self, approve):
@@ -243,7 +226,6 @@ class TestApprovalGate:
             {"id": "2", "name": "read_file_content", "args": {"path": "b.py"}},
         ])
         result = approval_gate({"messages": [ai]})
-        # Every tool call needs a reply or the model sees a dangling call.
         assert {m.tool_call_id for m in result["messages"]} == {"1", "2"}
         assert "CANCELLED" in result["messages"][0].content
         assert "SKIPPED" in result["messages"][1].content
@@ -328,9 +310,8 @@ class TestDescribeToolCall:
         assert "run a.py" in _describe_tool_call(tc)
 
 
-# ---------------------------------------------------------------------------
+
 # process_execution
-# ---------------------------------------------------------------------------
 
 class TestProcessExecution:
     def test_parses_json_success(self):
@@ -418,9 +399,7 @@ class TestProcessExecution:
         assert len(result["generated_code"]) == 0
 
 
-# ---------------------------------------------------------------------------
 # retry_router
-# ---------------------------------------------------------------------------
 
 class TestRetryRouter:
     def test_resets_count_on_success(self):

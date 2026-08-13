@@ -165,7 +165,7 @@ class TestEventRendering:
             RunFinished(reason="completed", stats=SessionStats(token_budget=1)),
         ]
         for event in events:
-            console_ui.handle(event)  # must not raise
+            console_ui.handle(event) 
 
 
 class TestApprovalRendering:

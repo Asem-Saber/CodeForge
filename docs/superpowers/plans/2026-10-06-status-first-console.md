@@ -19,6 +19,7 @@
 - Code content never reaches scrollback. `_format_args` already guards this; keep it as the only path from args to screen.
 - `tests/test_ui.py`'s `ui` fixture (`force_terminal=False`, `no_color=True`, `width=100`) stays as it is.
 - Run the whole file after every task: `pytest tests/test_ui.py -q`. Final gate: `pytest tests/test_ui.py tests/test_nodes.py tests/test_session.py -q`.
+- **Do not commit.** The repository owner commits this change themselves. Each task ends by leaving its work in the working tree and reporting the files touched.
 
 ---
 
@@ -200,12 +201,10 @@ The re-export keeps `from src.ui.console import format_tokens` working in `tests
 Run: `pytest tests/test_ui.py tests/test_status.py -q`
 Expected: PASS, no failures. `TestHelpers::test_format_tokens` in `test_ui.py` still passes via the re-export.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Report**
 
-```bash
-git add src/ui/status.py src/ui/console.py tests/test_status.py
-git commit -m "add phase and verb vocabulary for the status region"
-```
+Do not commit. The repository owner commits this change themselves; leave the
+work in the working tree and report which files you touched.
 
 ---
 
@@ -217,7 +216,8 @@ git commit -m "add phase and verb vocabulary for the status region"
 
 **Interfaces:**
 - Consumes: `phase_for`, `PHASES`, `SPINNER`, `WORD_SECONDS`, `format_tokens` from Task 1.
-- Produces: `StatusRegion(console, clock=time.monotonic, word_seconds=WORD_SECONDS)` with methods `start()`, `stop()`, `pause()`, `enter_tool(tool: str, args: dict)`, `leave_tool()`, `update_stats(stats: SessionStats)`, and `render() -> Group`. `start()` and `stop()` are idempotent.
+- Produces: `StatusRegion(console, clock=time.monotonic, word_seconds=WORD_SECONDS)` with methods `start()`, `stop()`, `pause()`, `enter_tool(tool: str, args: dict)`, `leave_tool()`, `update_stats(stats: SessionStats)`, `render() -> Group`, and the property `is_active -> bool`. `start()` and `stop()` are idempotent.
+- Also produces: `target_of(args: dict) -> str`, which replaces `ConsoleUI._format_args`. Task 2 deletes that method so the two never coexist in the tree.
 
 Design notes the implementer needs:
 
@@ -332,11 +332,22 @@ class TestStatusRegion:
 
     def test_start_and_stop_are_idempotent(self, region):
         status, _clock, _ = region
+        assert status.is_active is False
         status.start()
         status.start()
+        assert status.is_active is True
         status.stop()
         status.stop()
+        assert status.is_active is False
         status.pause()
+        assert status.is_active is False
+
+    def test_second_start_does_not_reset_elapsed(self, region):
+        status, clock, _ = region
+        status.start()
+        clock[0] = 9.0
+        status.start()
+        assert "9s" in shown(region)
 
     def test_nothing_is_written_to_a_non_terminal_console(self, region):
         status, _clock, buffer = region
@@ -411,6 +422,10 @@ class StatusRegion:
         """Stop so a blocking prompt can own the line. Same teardown as stop()."""
         self.stop()
 
+    @property
+    def is_active(self) -> bool:
+        return self._live is not None
+
     # State
 
     def enter_tool(self, tool: str, args: dict):
@@ -479,9 +494,14 @@ class StatusRegion:
         return line
 ```
 
-- [ ] **Step 4: Add `target_of`, shared by the status row and the step row**
+- [ ] **Step 4: Move `_format_args` here as `target_of`**
 
-`enter_tool` above calls `target_of`. It is the same "name the call without dumping contents" rule as `ConsoleUI._format_args` (`console.py:177`), and Task 4 needs it too, so it lives here rather than being duplicated. Append to `src/ui/status.py`:
+`enter_tool` above calls `target_of`. This is `ConsoleUI._format_args`
+(`console.py:177`) moved, not copied — the status row and the step row (Task 4)
+both need it, and two copies of this rule in the tree is exactly the drift that
+would let the live row and the scrollback row disagree about the same call.
+
+Append to `src/ui/status.py`:
 
 ```python
 def target_of(args: dict) -> str:
@@ -500,10 +520,30 @@ def target_of(args: dict) -> str:
     return ", ".join(parts) or "—"
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+Note the one behaviour change from `_format_args`: empty args now render `—`
+rather than an empty string, so a step row for a no-argument call still has a
+target column.
 
-Run: `pytest tests/test_status.py -q`
-Expected: PASS, 21 passed
+- [ ] **Step 5: Delete `_format_args` from `console.py`**
+
+Delete the `_format_args` method (`console.py:177`) entirely. Its only caller is
+the `ToolCallStarted` branch of `handle`; change `self._format_args(event.args)`
+to `target_of(event.args)` and extend the import added in Task 1:
+
+```python
+from src.ui.status import format_tokens, step_verb, target_of
+```
+
+Task 5 deletes that print call altogether, but leaving a call to a deleted
+method in the tree between tasks would break every test in `test_ui.py`.
+
+- [ ] **Step 6: Run test to verify it passes**
+
+Run: `pytest tests/test_status.py tests/test_ui.py -q`
+Expected: PASS, 22 passed in `test_status.py` and no regressions in
+`test_ui.py` — `test_tool_call`, `test_tool_call_shows_filename_not_contents`
+and `test_long_args_are_summarized` all still exercise the same rule through
+`target_of`.
 
 If `test_nothing_is_written_to_a_non_terminal_console` fails, Rich's `Live` is
 emitting something on stop for this console type after all. Do not make the
@@ -512,12 +552,10 @@ region non-transient to satisfy it — relax the assertion to
 rest of the plan is that the spinner never lands in scrollback, not that Rich
 writes literally zero bytes.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Report**
 
-```bash
-git add src/ui/status.py tests/test_status.py
-git commit -m "add StatusRegion, the live bottom zone of the transcript"
-```
+Do not commit. Leave the work in the working tree and report which files you
+touched.
 
 ---
 
@@ -705,12 +743,10 @@ Remove the now-unused `Live` import from the `rich.live` line.
 Run: `pytest tests/test_ui.py -q`
 Expected: PASS for `TestStripCodeFences`, `TestProse`, `test_assistant_message`, and `test_assistant_tokens_are_flushed` (which already fires `RunFinished`, so it needed no change). `test_tool_call`, `test_tool_call_shows_filename_not_contents` and `test_long_args_are_summarized` still pass at this point — `ToolCallStarted` is not touched until Task 5.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Report**
 
-```bash
-git add src/ui/console.py tests/test_ui.py
-git commit -m "buffer prose until the run finishes and collapse fenced code"
-```
+Do not commit. Leave the work in the working tree and report which files you
+touched.
 
 ---
 
@@ -918,27 +954,17 @@ Replace the whole of `_render_result` in `src/ui/console.py` with:
         return clip_line(event.content, 40)
 ```
 
-Add `target_of` to the `src.ui.status` import line added in Task 1:
+`target_of` is already imported — Task 2 added it and deleted `_format_args`.
 
-```python
-from src.ui.status import format_tokens, step_verb, target_of
-```
-
-- [ ] **Step 5: Delete `_format_args` and point its callers at `target_of`**
-
-`_format_args` (line 177) is now duplicated by `target_of` in `status.py`. Delete the method, and change its one remaining caller — the `ToolCallStarted` branch of `handle` — from `self._format_args(event.args)` to `target_of(event.args)`. Task 5 deletes that branch's print entirely, but leaving a call to a deleted method in the tree between tasks would break every test in the file.
-
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/test_ui.py -q`
 Expected: `TestStepRows` and `TestLineHelpers` pass. `test_simple_result_line`, `test_execution_result_shows_output_and_exit_code` and `test_failed_result_is_shown` also still pass unchanged — verify this rather than assuming it; they are the regression net for the fallback and panel rules.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Report**
 
-```bash
-git add src/ui/console.py tests/test_ui.py
-git commit -m "collapse tool results to a single step row"
-```
+Do not commit. Leave the work in the working tree and report which files you
+touched.
 
 ---
 
@@ -970,14 +996,14 @@ class TestStatusWiring:
         console_ui, _ = ui
         console_ui.status.start()
         console_ui.handle(RunFinished(reason="completed", stats=SessionStats(token_budget=100)))
-        assert console_ui.status._live is None
+        assert console_ui.status.is_active is False
 
     def test_approval_pauses_the_region(self, ui, monkeypatch):
         console_ui, _ = ui
         monkeypatch.setattr("src.ui.console.Confirm.ask", lambda *a, **k: True)
         console_ui.status.start()
         console_ui.ask_approval([], Session())
-        assert console_ui.status._live is None
+        assert console_ui.status.is_active is False
 
     def test_tokens_never_trigger_a_stats_read(self, ui):
         console_ui, _ = ui
@@ -1038,6 +1064,8 @@ Replace `test_long_args_are_summarized` (line 121):
 
 Run: `pytest tests/test_ui.py -q`
 Expected: FAIL. `test_tool_call_no_longer_writes_to_scrollback` fails because `handle` still prints the `> edit_file` line; `test_run_finished_stops_the_region` fails with `AttributeError: 'ConsoleUI' object has no attribute 'status'`.
+
+Extend the `src.ui.status` import in `tests/test_ui.py` if `StatusRegion` is needed there; the tests above reach it through `console_ui.status`, so no new import is required.
 
 - [ ] **Step 4: Wire it into `ConsoleUI`**
 
@@ -1135,12 +1163,10 @@ Check, in order:
 5. The spinner is gone after the turn, leaving the `turn n/m · tokens` line.
 6. `ctrl+c` mid-turn leaves a usable terminal with a visible cursor.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Report**
 
-```bash
-git add src/ui/console.py main.py tests/test_ui.py
-git commit -m "render a live status region instead of echoing model output"
-```
+Do not commit. Leave the work in the working tree and report which files you
+touched.
 
 ---
 

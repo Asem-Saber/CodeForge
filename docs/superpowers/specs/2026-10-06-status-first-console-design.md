@@ -133,13 +133,17 @@ by the renderer from the arguments it already stashes in `self._call_args` at
 |---|---|---|
 | `edit_file`, create | `+N` | `len(args["replace_str"].splitlines())` |
 | `edit_file`, patch | `+N/-M` | line counts of `replace_str` vs `find_str` |
-| `run_sandboxed_code` | last non-empty stdout line, clipped to 40 chars | `data["stdout"]` |
-| `run_sandboxed_code`, no stdout or non-zero exit | `exit {code}` | `data["exit_code"]` |
+| `run_sandboxed_code` | `exit {code}`, then ` · {last non-empty stdout line}` clipped to 40 chars when stdout is non-empty | `data["exit_code"]`, `data["stdout"]` |
 | `read_file_content` | `N lines` | `len(event.content.splitlines())` |
-| everything else | empty | — |
+| anything else, or `edit_file` with no stashed args | first line of `event.content`, clipped to 40 chars | current behaviour at `console.py:160` |
 
 For `pytest -q` the last stdout line happens to read `5 passed in 0.31s`. This
 is a generic "last line of output" rule, not pytest-specific parsing.
+
+The final fallback row matters for more than unknown tools: `ToolResult` can
+arrive without a matching `ToolCallStarted` ever having been seen by this
+renderer — on a resumed session, or in a unit test — and the tool's own return
+string (`Success: File created.`) is the only honest thing left to show.
 
 `_call_args` currently grows for the lifetime of the session because nothing
 removes entries. `_render_result` pops the entry it consumes.
@@ -194,9 +198,14 @@ that already prevents Live from animating under pytest.
 
 New tests:
 
-- `_StatusRegion` renders deterministically with an injected clock and an
-  injected word picker. Assert the verb for each phase, elapsed formatting, and
-  the retry suffix.
+A `Live(transient=True)` on a non-terminal console prints nothing at all — not
+even on stop. So the status region is invisible to the existing `StringIO`
+assertions, and needs its own tests that render it directly.
+
+- `StatusRegion.render()` is deterministic with an injected clock alone: the
+  word is `pool[elapsed // 4 % len(pool)]`, so no injected word picker is
+  needed. Assert the word for each phase, elapsed formatting, and the retry
+  suffix.
 - Phase transitions: `enter_tool("edit_file", {"find_str": ""})` selects the
   creating pool; non-empty `find_str` selects patching; an unknown tool name
   falls back to thinking without raising.
@@ -208,15 +217,35 @@ New tests:
 
 Existing tests that change by design:
 
-- `test_assistant_tokens_are_flushed` — tokens no longer print on arrival.
-  Rewritten to assert they print at `RunFinished`.
-- `test_execution_result_shows_output_and_exit_code` — a successful run now
-  collapses to one line. Split into a success case asserting the collapsed row
-  and a failure case asserting the panel survives.
-- `test_tool_call` — the step row format changed.
+- `test_assistant_message` — asserts on prose without firing `RunFinished`, so
+  buffered prose never flushes. Add the `RunFinished`.
 
-The remaining 30 tests in `test_ui.py` are unaffected. `test_e2e.py` does not
-touch the renderer.
+Three more because `ToolCallStarted` no longer writes to scrollback, so a test
+that fires only that event now sees nothing:
+
+- `test_tool_call` — add the matching `ToolResult` and assert on the step row.
+  The `"edit_file" in output` assertion becomes the step verb, `create`.
+- `test_tool_call_shows_filename_not_contents` — add the matching `ToolResult`.
+  Its intent (filename shown, 200 lines of content not shown) is preserved by
+  the step row.
+- `test_long_args_are_summarized` — add the matching `ToolResult`. The step row
+  reuses `_format_args`, so `code=<300 chars>` still appears.
+
+Four tests that looked at risk survive unchanged, and the implementation must
+keep them that way:
+
+- `test_assistant_tokens_are_flushed` already fires `RunFinished` after the
+  tokens, which is exactly when buffered prose flushes.
+- `test_execution_result_shows_output_and_exit_code` asserts `42` and `exit 0` —
+  both present in the collapsed metric `exit 0 · 42`.
+- `test_failed_result_is_shown` asserts on the panel, which failures keep.
+- `test_simple_result_line` fires a `ToolResult` with no preceding
+  `ToolCallStarted`, which is what the content fallback row covers.
+- `test_every_event_type_renders` uses the tool name `t`, which is what the
+  unknown-tool fallback covers.
+
+The remaining tests in `test_ui.py` are unaffected. `test_e2e.py` does not touch
+the renderer.
 
 ## Risks
 

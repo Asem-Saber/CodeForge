@@ -222,6 +222,8 @@ work in the working tree and report which files you touched.
 Design notes the implementer needs:
 
 - The word is `pool[int(elapsed // word_seconds) % len(pool)]` — a pure function of the clock, so injecting the clock is enough to make tests deterministic. Do not add randomness.
+- `Live` must be constructed with `get_renderable=self.render`, not with a positional `self.render()`. A positional renderable is a one-time snapshot: Rich's refresh thread re-renders that same frozen `Group`, so the spinner never moves and the timer never ticks between the explicit `_refresh()` calls that only happen on events — which is to say, it would sit perfectly still through exactly the long model wait it exists to cover. `get_renderable` takes a zero-argument callable invoked on every refresh.
+- `stop()` must clear `_stats`. `has_recent_error` and `retry_count` are LangGraph state fields that outlive a turn, so retaining them lets the next turn open on `Regrouping…` with a stale retry count — the phase model's whole claim is that the word never describes the wrong activity.
 - `retrying` overrides `thinking` only. While a tool is active its own phase wins, even if `stats.has_recent_error` is set.
 - `pause()` is `stop()`. It exists as a separate name because `ask_approval` calls it for a different reason (a blocking `Confirm.ask` cannot share a line with a `Live`), and a reader of `ask_approval` should not have to wonder whether stopping is correct there.
 - Rich's `Live(transient=True)` on a non-terminal console renders nothing, not even on `stop()`. That is why `render()` is public: it is the only way to test this class.
@@ -403,7 +405,7 @@ class StatusRegion:
         self._phase = "thinking"
         self._step = None
         self._live = Live(
-            self.render(),
+            get_renderable=self.render,
             console=self.console,
             transient=True,
             refresh_per_second=10,
@@ -417,6 +419,7 @@ class StatusRegion:
         self._live = None
         self._step = None
         self._phase = "thinking"
+        self._stats = None
 
     def pause(self):
         """Stop so a blocking prompt can own the line. Same teardown as stop()."""

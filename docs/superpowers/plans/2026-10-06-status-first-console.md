@@ -678,7 +678,10 @@ Expected: collection error, `ImportError: cannot import name 'strip_code_fences'
 Add `import re` to the top of `src/ui/console.py` beside `import difflib`, and add after `clip` (around line 75):
 
 ```python
-FENCE = re.compile(r"^```([^\n]*)\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
+FENCE = re.compile(
+    r"^([ \t]*)(```|~~~)([^\n]*)\n(.*?)^[ \t]*\2[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
 
 
 def strip_code_fences(text: str, filenames: list[str] | None = None) -> str:
@@ -688,14 +691,36 @@ def strip_code_fences(text: str, filenames: list[str] | None = None) -> str:
     events; the fence's language tag is the fallback. An unterminated fence has
     no closing match and is left verbatim.
     """
+    text = text.replace("\r\n", "\n")
     names = list(filenames or [])
 
     def replace(match):
-        label = names.pop(0) if names else (match.group(1).strip() or "code")
-        return f"▸ {label} ({len(match.group(2).splitlines())} lines)"
+        label = names.pop(0) if names else (match.group(3).strip() or "code")
+        count = len(match.group(4).splitlines())
+        return f"{match.group(1)}▸ {label} ({count} line{'s' if count != 1 else ''})"
 
     return FENCE.sub(replace, text)
 ```
+
+Every part of that pattern is load-bearing, because a fence this misses is raw
+code in the user's scrollback — the one outcome the task exists to prevent:
+
+- Group 1 captures the indentation and the replacement re-emits it. Any amount
+  is allowed: inside a list item a fence is indented *relative to its
+  container*, so a fence nested under a bullet routinely sits 4 or 8 columns in.
+  Capping the indent misses those, and emitting the reference line at column 0
+  terminates the enclosing list item and restarts the numbering of the next
+  ordered list.
+- The `\2` backreference pairs the markers, so a ``` block cannot be closed by
+  a `~~~` line.
+- `text.replace("\r\n", "\n")` kills the CRLF failure class at the source.
+  Without it, `$` in MULTILINE mode matches only before `\n` and `[ \t]*`
+  will not consume the `\r`, so a CRLF-terminated closing fence never matches
+  and the entire block passes through verbatim.
+
+Allowing unlimited indentation cannot mangle ordinary prose: the pattern only
+matches where a fence marker follows the indentation, and indented prose has no
+marker. Verified against indented plain text, which passes through untouched.
 
 In `ConsoleUI.__init__`, add alongside `self._call_args`:
 
@@ -1139,10 +1164,29 @@ def drive(events, session: Session, ui: ConsoleUI):
         for event in events:
             ui.handle(event, session)
     finally:
-        ui.status.stop()
+        ui.end_turn()
 ```
 
 The `finally` is what keeps a `KeyboardInterrupt` or an exception mid-turn from leaving the terminal with a hidden cursor and a stale spinner.
+
+It must do more than stop the spinner. A turn that dies mid-stream never emits
+`RunFinished`, so `ConsoleUI._buffer` and `_code_files` still hold that turn's
+prose — which would then print at the *end of the next turn*, attributing one
+turn's explanation to another. Add a method on `ConsoleUI` that both stops the
+region and discards the buffered prose, and call that from the `finally`:
+
+```python
+    def end_turn(self):
+        """Tear down after a turn, whether it finished or died mid-stream."""
+        self.status.stop()
+        self._buffer = ""
+        self._code_files.clear()
+```
+
+`RunFinished` already flushes and clears on the happy path, so by the time
+`finally` runs on a normal turn there is nothing left to discard and this is a
+no-op. Name it on `ConsoleUI`, not `StatusRegion` — the buffer is the
+renderer's state, and `StatusRegion` must not reach into it.
 
 - [ ] **Step 6: Run tests to verify they pass**
 

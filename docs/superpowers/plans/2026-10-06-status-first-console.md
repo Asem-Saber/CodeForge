@@ -794,10 +794,25 @@ Row layout: `glyph`, `verb` padded to 8, `target`, `metric`. The metric rules, i
 |---|---|
 | `data` has `exit_code`, stdout non-empty | `exit {code} · {last non-empty stdout line}` clipped to 40 |
 | `data` has `exit_code`, stdout empty | `exit {code}` |
+| `not event.ok` | first line of `event.content`, clipped to 40 |
 | `edit_file` **and** stashed args exist, no `find_str` | `+{lines in replace_str}` |
 | `edit_file` **and** stashed args exist, with `find_str` | `+{lines in replace_str}/-{lines in find_str}` |
-| `read_file_content` | `{n} lines` |
+| `read_file_content` | `{n} line[s]` |
 | anything else | first line of `event.content`, clipped to 40 |
+
+The `not event.ok` row has to come third, before the per-tool rows, or the
+collapsed line lies on failure. `edit_file` and `read_file_content` return plain
+strings rather than JSON, so a failure has no `exit_code` and no `data` — which
+means no `Panel` either. Without that row, a failed edit renders
+`✗ patch a.py +3/-2`, claiming three lines added and two removed from a file
+that was never touched, with `Error: find_str not found in file.` nowhere on
+screen; a failed read reports a line count computed from the error text. It
+stays *after* the `exit_code` row because a non-zero exit already renders
+`exit N · tail` and still gets its Panel.
+
+Read every `dict.get` in this function with the `(... or "")` form, not a
+default argument: a key present with a `None` value defeats the default and
+raises inside rendering, which is the worst place to raise.
 
 The last row is not just a courtesy for unknown tools: a `ToolResult` can arrive with no `ToolCallStarted` the renderer ever saw (resumed session, or a unit test), and the tool's own return string is then the only honest thing left to show. This is why the `edit_file` rules are gated on `args` being non-empty.
 

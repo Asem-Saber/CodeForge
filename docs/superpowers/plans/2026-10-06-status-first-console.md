@@ -803,6 +803,11 @@ The last row is not just a courtesy for unknown tools: a `ToolResult` can arrive
 
 Failures keep the full `Panel` of stdout/stderr. Successes do not.
 
+Do not assert here that a finished step occupies exactly one line. It does not
+yet: `handle` still prints its `> tool target` line on `ToolCallStarted` until
+Task 5 removes it, and three existing tests depend on that print until then.
+Task 5 pins the one-line property once the print is gone.
+
 - [ ] **Step 1: Write the failing test**
 
 Extend the `src.ui.console` import in `tests/test_ui.py` to add `clip_line` and `last_line`, then add a new class:
@@ -846,7 +851,6 @@ class TestStepRows:
         assert "exit 0" in output
         assert "5 passed in 0.31s" in output
         assert "collecting" not in output
-        assert len([line for line in output.splitlines() if line.strip()]) == 1
 
     def test_run_with_no_stdout_shows_only_exit(self, ui):
         console_ui, buffer = ui
@@ -1058,7 +1062,11 @@ Replace `test_tool_call` (line 77):
         output = buffer.getvalue()
         assert "create" in output
         assert "a.py" in output
+        assert len([line for line in output.splitlines() if line.strip()]) == 1
 ```
+
+That last assertion is the one Task 4 could not make. It is the whole point of
+the change: a finished step is one line, not a start line plus a result line.
 
 Replace `test_tool_call_shows_filename_not_contents` (line 110):
 

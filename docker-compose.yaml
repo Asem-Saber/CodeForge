@@ -17,17 +17,9 @@ services:
       - "0"
     mem_limit: 1g
     cpus: 1.0
-    secrets:
-      - api_key
-      - langsmith_api_key
+    env_file:
+      - .env
     environment:
-      API_KEY_FILE: /run/secrets/api_key
-      LANGSMITH_API_KEY_FILE: /run/secrets/langsmith_api_key
-      ENDPOINT: https://openrouter.ai/api/v1
-      MODEL_ID: openai/gpt-4o-mini
-      LANGSMITH_TRACING: "true"
-      LANGSMITH_ENDPOINT: https://api.smith.langchain.com
-      LANGSMITH_PROJECT: CodeForge
       HOST_WORKSPACE_ROOT: F:/Career/Projects/CodeForge/workspace
       CHECKPOINT_DB: /app/data/checkpoints.sqlite
     volumes:
@@ -55,9 +47,3 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-
-secrets:
-  api_key:
-    file: ./secrets/api_key
-  langsmith_api_key:
-    file: ./secrets/langsmith_api_key

@@ -113,7 +113,7 @@ right directory.
 CodeForge/
 ├── main.py                  REPL entrypoint: arg parsing, input loop, approval loop
 ├── src/
-│   ├── config.py            Env, secrets-file loading, budgets, logging
+│   ├── config.py            Env loading from .env, budgets, logging
 │   ├── prompts.py           System prompt and its guardrails
 │   ├── agent/
 │   │   ├── graph.py         StateGraph wiring, SQLite checkpointer, compiled app
@@ -135,7 +135,7 @@ CodeForge/
 │       └── commands.py      Slash commands
 ├── sandbox/Dockerfile       The execution image (codeforge-sandbox)
 ├── Dockerfile               The app image
-├── docker-compose.yaml      Both images, secrets, hardening
+├── docker-compose.yaml      Both images, env, hardening
 ├── tests/                   Unit, integration (real Docker), and e2e suites
 └── workspace/               Per-session working directories (gitignored)
 ```
@@ -156,17 +156,18 @@ You also need an OpenAI-compatible endpoint and key. Any provider works;
 
 ### Option A — Docker Compose
 
-Put your keys in files rather than environment variables:
+Put your keys in `.env` — Compose reads that file and passes the variables into
+the container:
 
 ```bash
-mkdir -p secrets && printf '%s' 'YOUR-API-KEY' > secrets/api_key && printf '%s' 'YOUR-LANGSMITH-KEY' > secrets/langsmith_api_key
+cp .env.example .env
 ```
 
 Then edit `docker-compose.yaml` and replace the two absolute paths with your own
 checkout — `HOST_WORKSPACE_ROOT` and the matching entry under `volumes:` both
 point at `<your-repo>/workspace`. They must agree, because the host Docker daemon
 resolves sandbox bind mounts against the host filesystem, not the app container's.
-Adjust `MODEL_ID` and `ENDPOINT` in the same file while you're there.
+`MODEL_ID` and `ENDPOINT` come from `.env`, so adjust them there.
 
 ```bash
 docker compose run --rm codeforge
@@ -240,7 +241,7 @@ Integration and e2e tests that need a live Docker daemon and the
 | **Persistence** | `langgraph-checkpoint-sqlite` — one thread per session |
 | **Isolation** | Docker SDK for Python; a hardened `python:3.12-slim` sandbox image |
 | **Terminal UI** | Rich for rendering, prompt-toolkit for input history |
-| **Config** | python-dotenv, with `*_FILE` indirection for Docker secrets |
+| **Config** | python-dotenv — a single `.env` for both local and Compose runs |
 | **Tests** | pytest, with `integration` and `e2e` markers |
 | **CI** | GitHub Actions — 18-way matrix (3 OSes × 3 Pythons × pip/uv), image builds, live-sandbox integration |
 

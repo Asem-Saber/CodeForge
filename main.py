@@ -13,12 +13,6 @@ HISTORY_PATH = pathlib.Path("logs/history")
 
 
 class InputReader:
-    """Reads user input, degrading to input() where prompt_toolkit can't run.
-
-    prompt_toolkit needs a real console, so it raises when stdin/stdout is a
-    pipe or a non-Windows terminal emulator on Windows.
-    """
-
     def __init__(self):
         self._session = self._make_session()
 
@@ -52,8 +46,12 @@ def resolve_pending(session: Session, ui: ConsoleUI):
 
 
 def drive(events, session: Session, ui: ConsoleUI):
-    for event in events:
-        ui.handle(event, session)
+    ui.begin_turn()
+    try:
+        for event in events:
+            ui.handle(event, session)
+    finally:
+        ui.end_turn()
 
 
 def run_turn(session: Session, ui: ConsoleUI, user_input: str):
@@ -102,7 +100,7 @@ def main():
                 resolve_pending(session, ui)
                 user_input = reader.read().strip()
             except KeyboardInterrupt:
-                continue  # Ctrl+C clears the line; Ctrl+D exits
+                continue
             except EOFError:
                 break
 

@@ -53,15 +53,11 @@ sandbox wall time (60s) — a runaway loop stops itself.
 saved session and its files; `--session <id>` resumes one, including an approval
 left hanging by an interrupted turn.
 
-**Package installation on request.** `install_package` pip-installs into the
-running sandbox after validating the package name. The base image already ships
-numpy, pandas, matplotlib, requests, beautifulsoup4, scipy, scikit-learn, pillow,
-tabulate, fastapi, httpx, and pytest.
-
-**A real terminal UI.** Streaming tokens, syntax-highlighted code, diffs, clipped
-output, and slash commands (`/help`, `/sessions`, `/files`, `/cost`, `/new`,
-`/exit`). Rendering lives entirely in `src/ui` — the service layer emits plain
-dataclass events, so an HTTP or web front end can consume the same stream.
+**A real terminal UI.** A welcome panel on launch showing the version, model and
+endpoint, then streaming tokens, syntax-highlighted code, diffs, clipped output,
+and slash commands (`/help`, `/sessions`, `/files`, `/cost`, `/new`, `/exit`).
+Rendering lives entirely in `src/ui` — the service layer emits plain dataclass
+events, so an HTTP or web front end can consume the same stream.
 
 ---
 
@@ -132,6 +128,9 @@ CodeForge/
 │   │   └── events.py        Presentation-free event dataclasses
 │   └── ui/
 │       ├── console.py       Rich renderer: streaming, diffs, approval prompts
+│       ├── banner.py        The startup welcome panel
+│       ├── sessions.py      Keyboard session picker
+│       ├── status.py        Live status region: spinner, phase, elapsed
 │       └── commands.py      Slash commands
 ├── sandbox/Dockerfile       The execution image (codeforge-sandbox)
 ├── Dockerfile               The app image
@@ -217,15 +216,21 @@ being sent to the model:
 | Command | Does |
 | --- | --- |
 | `/help` | show this list |
-| `/sessions` | list saved sessions |
+| `/sessions` | pick a saved session to resume |
 | `/files` | list files in this session's workspace |
 | `/cost` | show turn and token usage |
 | `/new` | start a fresh session |
 | `/exit` | quit |
 
+`/sessions` opens a keyboard picker — `↑`/`↓` or `j`/`k` to move, enter to
+resume, esc to cancel. Resuming closes the current sandbox and switches in
+place, including into an approval left hanging by an interrupted turn. Where
+there is no TTY the picker degrades to a numbered prompt.
+
 `/quit` is an alias for `/exit`, and bare `exit` or `quit` work too. `Ctrl+C`
 clears the current line or interrupts a running turn; `Ctrl+D` leaves. On the way
-out CodeForge stops the sandbox and prints the command to resume the session.
+out CodeForge stops the sandbox; the session is checkpointed, and `/sessions`
+lists it first next time.
 
 Run the tests:
 
@@ -247,8 +252,6 @@ Integration and e2e tests that need a live Docker daemon and the
 | **Persistence** | `langgraph-checkpoint-sqlite` — one thread per session |
 | **Isolation** | Docker SDK for Python; a hardened `python:3.12-slim` sandbox image |
 | **Terminal UI** | Rich for rendering, prompt-toolkit for input history |
-| **Config** | python-dotenv — a single `.env` for both local and Compose runs |
-| **Packaging** | uv — `uv.lock` pins the app image, `pyproject.toml` ranges drive CI |
 | **Tests** | pytest, with `integration` and `e2e` markers |
 | **CI** | GitHub Actions — 9-way matrix (3 OSes × 3 Pythons), image builds, live-sandbox integration |
 

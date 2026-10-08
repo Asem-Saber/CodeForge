@@ -2,8 +2,11 @@
 .gitignore
 .env
 .env.example
+.venv
 .claude
 .superpowers
+.github
+docs
 .pytest_cache
 __pycache__
 **/__pycache__
@@ -19,4 +22,3 @@ secrets
 Dockerfile
 docker-compose.yaml
 README.md
-requirements-dev.txt

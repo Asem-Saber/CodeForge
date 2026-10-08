@@ -53,15 +53,11 @@ sandbox wall time (60s) — a runaway loop stops itself.
 saved session and its files; `--session <id>` resumes one, including an approval
 left hanging by an interrupted turn.
 
-**Package installation on request.** `install_package` pip-installs into the
-running sandbox after validating the package name. The base image already ships
-numpy, pandas, matplotlib, requests, beautifulsoup4, scipy, scikit-learn, pillow,
-tabulate, fastapi, httpx, and pytest.
-
-**A real terminal UI.** Streaming tokens, syntax-highlighted code, diffs, clipped
-output, and slash commands (`/help`, `/sessions`, `/files`, `/cost`, `/new`,
-`/exit`). Rendering lives entirely in `src/ui` — the service layer emits plain
-dataclass events, so an HTTP or web front end can consume the same stream.
+**A real terminal UI.** A welcome panel on launch showing the version, model and
+endpoint, then streaming tokens, syntax-highlighted code, diffs, clipped output,
+and slash commands (`/help`, `/sessions`, `/files`, `/cost`, `/new`, `/exit`).
+Rendering lives entirely in `src/ui` — the service layer emits plain dataclass
+events, so an HTTP or web front end can consume the same stream.
 
 ---
 
@@ -113,7 +109,7 @@ right directory.
 CodeForge/
 ├── main.py                  REPL entrypoint: arg parsing, input loop, approval loop
 ├── src/
-│   ├── config.py            Env, secrets-file loading, budgets, logging
+│   ├── config.py            Env loading from .env, budgets, logging
 │   ├── prompts.py           System prompt and its guardrails
 │   ├── agent/
 │   │   ├── graph.py         StateGraph wiring, SQLite checkpointer, compiled app
@@ -132,10 +128,13 @@ CodeForge/
 │   │   └── events.py        Presentation-free event dataclasses
 │   └── ui/
 │       ├── console.py       Rich renderer: streaming, diffs, approval prompts
+│       ├── banner.py        The startup welcome panel
+│       ├── sessions.py      Keyboard session picker
+│       ├── status.py        Live status region: spinner, phase, elapsed
 │       └── commands.py      Slash commands
 ├── sandbox/Dockerfile       The execution image (codeforge-sandbox)
 ├── Dockerfile               The app image
-├── docker-compose.yaml      Both images, secrets, hardening
+├── docker-compose.yaml      Both images, env, hardening
 ├── tests/                   Unit, integration (real Docker), and e2e suites
 └── workspace/               Per-session working directories (gitignored)
 ```
@@ -156,17 +155,18 @@ You also need an OpenAI-compatible endpoint and key. Any provider works;
 
 ### Option A — Docker Compose
 
-Put your keys in files rather than environment variables:
+Put your keys in `.env` — Compose reads that file and passes the variables into
+the container:
 
 ```bash
-mkdir -p secrets && printf '%s' 'YOUR-API-KEY' > secrets/api_key && printf '%s' 'YOUR-LANGSMITH-KEY' > secrets/langsmith_api_key
+cp .env.example .env
 ```
 
 Then edit `docker-compose.yaml` and replace the two absolute paths with your own
 checkout — `HOST_WORKSPACE_ROOT` and the matching entry under `volumes:` both
 point at `<your-repo>/workspace`. They must agree, because the host Docker daemon
 resolves sandbox bind mounts against the host filesystem, not the app container's.
-Adjust `MODEL_ID` and `ENDPOINT` in the same file while you're there.
+`MODEL_ID` and `ENDPOINT` come from `.env`, so adjust them there.
 
 ```bash
 docker compose run --rm codeforge
@@ -178,28 +178,34 @@ read-only so the app can start sandboxes.
 
 ### Option B — Local development
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). `uv sync` creates
+`.venv`, installs the exact versions pinned in `uv.lock`, and fetches a matching
+Python if you don't have one — there is no separate virtualenv step.
+
 ```bash
 git clone https://github.com/Asem-Saber/Coding-Assistant.git && cd Coding-Assistant
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+uv sync --extra dev
 cp .env.example .env
 ```
+
+Dev tooling lives in a `dev` extra rather than the default dependencies, so plain
+`uv sync` gives you the app alone and `--extra dev` adds pytest.
 
 Fill in `.env` with `API_KEY`, `ENDPOINT`, and `MODEL_ID`. The LangSmith variables
 are optional — drop them to run without tracing.
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 Useful invocations:
 
 ```bash
-python main.py --list
+uv run python main.py --list
 ```
 
 ```bash
-python main.py --session <session-id>
+uv run python main.py --session <session-id>
 ```
 
 ### Slash commands
@@ -210,20 +216,26 @@ being sent to the model:
 | Command | Does |
 | --- | --- |
 | `/help` | show this list |
-| `/sessions` | list saved sessions |
+| `/sessions` | pick a saved session to resume |
 | `/files` | list files in this session's workspace |
 | `/cost` | show turn and token usage |
 | `/new` | start a fresh session |
 | `/exit` | quit |
 
+`/sessions` opens a keyboard picker — `↑`/`↓` or `j`/`k` to move, enter to
+resume, esc to cancel. Resuming closes the current sandbox and switches in
+place, including into an approval left hanging by an interrupted turn. Where
+there is no TTY the picker degrades to a numbered prompt.
+
 `/quit` is an alias for `/exit`, and bare `exit` or `quit` work too. `Ctrl+C`
 clears the current line or interrupts a running turn; `Ctrl+D` leaves. On the way
-out CodeForge stops the sandbox and prints the command to resume the session.
+out CodeForge stops the sandbox; the session is checkpointed, and `/sessions`
+lists it first next time.
 
 Run the tests:
 
 ```bash
-pytest -q
+uv run pytest -q
 ```
 
 Integration and e2e tests that need a live Docker daemon and the
@@ -240,9 +252,8 @@ Integration and e2e tests that need a live Docker daemon and the
 | **Persistence** | `langgraph-checkpoint-sqlite` — one thread per session |
 | **Isolation** | Docker SDK for Python; a hardened `python:3.12-slim` sandbox image |
 | **Terminal UI** | Rich for rendering, prompt-toolkit for input history |
-| **Config** | python-dotenv, with `*_FILE` indirection for Docker secrets |
 | **Tests** | pytest, with `integration` and `e2e` markers |
-| **CI** | GitHub Actions — 18-way matrix (3 OSes × 3 Pythons × pip/uv), image builds, live-sandbox integration |
+| **CI** | GitHub Actions — 9-way matrix (3 OSes × 3 Pythons), image builds, live-sandbox integration |
 
 Observability is optional: set the LangSmith variables and every run is traced.
 

@@ -1,10 +1,13 @@
 import uuid
+from datetime import datetime, timezone
+
 import pytest
 from langchain_core.messages import AIMessage
 
 import src.agent.nodes as nodes_module
 import src.sandbox.paths as paths_module
 from src.service import Session, list_sessions
+from src.service.session import _checkpoint_time
 from src.service.events import (
     ApprovalRequest,
     ApprovalRequested,
@@ -249,6 +252,15 @@ class TestListSessions:
         assert info.files == ["a.py"]
         assert info.has_workspace is True
 
+    def test_reports_the_latest_checkpoint_time(self, scripted):
+        scripted(ai(content="hi"))
+        session = Session()
+        drain(session.send("hi"))
+
+        info = next(i for i in list_sessions() if i.session_id == session.session_id)
+        assert info.updated_at is not None
+        assert abs((datetime.now(timezone.utc) - info.updated_at).total_seconds()) < 60
+
 
 class TestHistory:
     def test_history_persists_across_session_objects(self, scripted):
@@ -265,3 +277,27 @@ class TestHistory:
         session = Session("never-used")
         assert session.exists() is False
         assert session.history() == []
+
+
+class FakeTuple:
+    def __init__(self, checkpoint):
+        self.checkpoint = checkpoint
+
+
+class TestCheckpointTime:
+    def test_parses_an_offset_timestamp(self):
+        parsed = _checkpoint_time(FakeTuple({"ts": "2026-10-07T12:00:00+00:00"}))
+        assert parsed.year == 2026 and parsed.hour == 12
+
+    def test_parses_a_z_suffix_on_python_310(self):
+        parsed = _checkpoint_time(FakeTuple({"ts": "2026-10-07T12:00:00Z"}))
+        assert parsed is not None and parsed.tzinfo is not None
+
+    def test_missing_ts_is_none(self):
+        assert _checkpoint_time(FakeTuple({})) is None
+
+    def test_malformed_ts_is_none(self):
+        assert _checkpoint_time(FakeTuple({"ts": "not-a-date"})) is None
+
+    def test_absent_checkpoint_is_none(self):
+        assert _checkpoint_time(object()) is None

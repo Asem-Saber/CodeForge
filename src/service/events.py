@@ -1,9 +1,5 @@
-"""Presentation-free events emitted while an agent run streams.
-
-Renderers (CLI today, HTTP later) consume these; nothing here knows how they
-are displayed.
-"""
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -40,6 +36,7 @@ class SessionInfo:
     session_id: str
     files: list = field(default_factory=list)
     has_workspace: bool = False
+    updated_at: datetime | None = None
 
 
 # Streamed events
@@ -94,5 +91,5 @@ class ApprovalRequested(Event):
 
 @dataclass
 class RunFinished(Event):
-    reason: str  # "completed" | "awaiting_approval"
+    reason: str
     stats: SessionStats = field(default_factory=SessionStats)

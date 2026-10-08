@@ -125,7 +125,6 @@ def main():
     finally:
         session.close()
         logger.info("Sandbox closed for session %s", session.session_id)
-        ui.print_note(f"Resume with: python main.py --session {session.session_id}")
 
 
 if __name__ == "__main__":

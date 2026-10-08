@@ -5,7 +5,7 @@ from src.service import Session, list_sessions
 
 COMMANDS = [
     ("/help", "show this list"),
-    ("/sessions", "list saved sessions"),
+    ("/sessions", "pick a saved session to resume"),
     ("/files", "list files in this session's workspace"),
     ("/cost", "show turn and token usage"),
     ("/new", "start a fresh session"),
@@ -17,7 +17,7 @@ COMMANDS = [
 class CommandResult:
     handled: bool = False
     should_exit: bool = False
-    session: Session | None = None  # set when the command swapped sessions
+    session: Session | None = None
 
 
 def is_command(text: str) -> bool:
@@ -36,8 +36,16 @@ def handle_command(text: str, session: Session, ui) -> CommandResult:
         return CommandResult(handled=True)
 
     if name == "/sessions":
-        ui.print_sessions(list_sessions())
-        return CommandResult(handled=True)
+        chosen = ui.pick_session(list_sessions(), current=session.session_id)
+        if chosen is None:
+            return CommandResult(handled=True)
+        if chosen == session.session_id:
+            ui.print_note(f"Already in {chosen}.")
+            return CommandResult(handled=True)
+        session.close()
+        resumed = Session(chosen)
+        ui.print_note(f"Resumed session {chosen}")
+        return CommandResult(handled=True, session=resumed)
 
     if name == "/files":
         ui.print_files(session)

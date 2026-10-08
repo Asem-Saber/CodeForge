@@ -19,6 +19,7 @@ from src.service.events import (
     ToolResult,
 )
 from src.ui.banner import render_banner
+from src.ui.sessions import format_age, pick_session
 from src.ui.status import StatusRegion, format_tokens, step_verb, target_of
 
 THEME = Theme({
@@ -123,12 +124,6 @@ FENCE = re.compile(
 
 
 def strip_code_fences(text: str, filenames: list[str] | None = None) -> str:
-    """Replace each fenced block with a one-line reference to what it wrote.
-
-    Filenames are consumed in arrival order from the turn's CodeGenerated
-    events; the fence's language tag is the fallback. An unterminated fence has
-    no closing match and is left verbatim.
-    """
     text = text.replace("\r\n", "\n")
     names = list(filenames or [])
 
@@ -360,8 +355,12 @@ class ConsoleUI:
                 summary += f", +{len(info.files) - 4} more"
             self.console.print(Text.assemble(
                 (info.session_id, "cf.session"),
-                (f"  {summary}", "cf.status"),
+                (f"  {format_age(info.updated_at):<11}", "cf.status"),
+                (summary, "cf.status"),
             ))
+
+    def pick_session(self, infos, current=None) -> str | None:
+        return pick_session(infos, self.console, current)
 
     def print_files(self, session):
         files = session.files()

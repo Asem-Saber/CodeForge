@@ -18,9 +18,11 @@ from src.service.events import (
     ToolCallStarted,
     ToolResult,
 )
+from src.ui.banner import render_banner
 from src.ui.status import StatusRegion, format_tokens, step_verb, target_of
 
 THEME = Theme({
+    "cf.brand": "bold orange3",
     "cf.tool": "cyan",
     "cf.ok": "green",
     "cf.fail": "red",
@@ -346,15 +348,7 @@ class ConsoleUI:
     # Standalone output
 
     def banner(self, session, resumed: bool):
-        label = "Resuming session" if resumed else "New session"
-        self.console.print(Text.assemble(
-            (f"{label} ", "cf.status"),
-            (session.session_id, "cf.session"),
-        ))
-        files = session.files()
-        if files:
-            self.console.print(Text(f"{len(files)} file(s) in workspace", style="cf.status"))
-        self.console.print(Text("/help for commands", style="cf.status"))
+        self.console.print(render_banner(session, resumed, self.console))
 
     def print_sessions(self, infos):
         if not infos:

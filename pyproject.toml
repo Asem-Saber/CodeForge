@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codeforge"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A coding agent that writes, validates and runs Python in an isolated Docker sandbox, pausing for approval before each write or execution."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,9 @@ svg = ["cairosvg>=2.7,<3"]
 
 [project.scripts]
 codeforge = "main:main"
+
+[tool.hatch.version]
+path = "src/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

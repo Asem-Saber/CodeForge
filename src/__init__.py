@@ -1,1 +1,3 @@
-"""CodeForge — AI coding harness built with LangGraph + E2B."""
+"""CodeForge — a coding agent that writes, validates and runs Python in a Docker sandbox."""
+
+__version__ = "0.1.0"

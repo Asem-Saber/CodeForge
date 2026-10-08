@@ -9,8 +9,8 @@ on:
             - "src/**"
             - "tests/**"
             - "sandbox/**"
-            - "requirements.txt"
             - "pyproject.toml"
+            - "uv.lock"
             - ".github/workflows/integration.yml"
     pull_request:
         branches:
@@ -19,8 +19,8 @@ on:
             - "src/**"
             - "tests/**"
             - "sandbox/**"
-            - "requirements.txt"
             - "pyproject.toml"
+            - "uv.lock"
             - ".github/workflows/integration.yml"
 
 permissions:

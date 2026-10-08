@@ -1,10 +1,6 @@
-"""Headless API over the agent graph.
-
-Drives a session, streams structured events, and answers approval pauses.
-Contains no rendering — see src/ui for that.
-"""
 import json
 import logging
+from datetime import datetime
 from typing import Iterator
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -229,9 +225,21 @@ def list_sessions() -> list[SessionInfo]:
             if has_workspace
             else []
         )
-        infos.append(SessionInfo(session_id=session_id, files=files, has_workspace=has_workspace))
+        infos.append(SessionInfo(
+            session_id=session_id,
+            files=files,
+            has_workspace=has_workspace,
+            updated_at=_checkpoint_time(tup),
+        ))
 
     return infos
+
+
+def _checkpoint_time(tup) -> datetime | None:
+    try:
+        return datetime.fromisoformat(tup.checkpoint["ts"].replace("Z", "+00:00"))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _first_interrupt_value(snapshot):

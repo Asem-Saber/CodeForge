@@ -179,28 +179,34 @@ read-only so the app can start sandboxes.
 
 ### Option B — Local development
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). `uv sync` creates
+`.venv`, installs the exact versions pinned in `uv.lock`, and fetches a matching
+Python if you don't have one — there is no separate virtualenv step.
+
 ```bash
 git clone https://github.com/Asem-Saber/Coding-Assistant.git && cd Coding-Assistant
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+uv sync --extra dev
 cp .env.example .env
 ```
+
+Dev tooling lives in a `dev` extra rather than the default dependencies, so plain
+`uv sync` gives you the app alone and `--extra dev` adds pytest.
 
 Fill in `.env` with `API_KEY`, `ENDPOINT`, and `MODEL_ID`. The LangSmith variables
 are optional — drop them to run without tracing.
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 Useful invocations:
 
 ```bash
-python main.py --list
+uv run python main.py --list
 ```
 
 ```bash
-python main.py --session <session-id>
+uv run python main.py --session <session-id>
 ```
 
 ### Slash commands
@@ -224,7 +230,7 @@ out CodeForge stops the sandbox and prints the command to resume the session.
 Run the tests:
 
 ```bash
-pytest -q
+uv run pytest -q
 ```
 
 Integration and e2e tests that need a live Docker daemon and the
@@ -242,8 +248,9 @@ Integration and e2e tests that need a live Docker daemon and the
 | **Isolation** | Docker SDK for Python; a hardened `python:3.12-slim` sandbox image |
 | **Terminal UI** | Rich for rendering, prompt-toolkit for input history |
 | **Config** | python-dotenv — a single `.env` for both local and Compose runs |
+| **Packaging** | uv — `uv.lock` pins the app image, `pyproject.toml` ranges drive CI |
 | **Tests** | pytest, with `integration` and `e2e` markers |
-| **CI** | GitHub Actions — 18-way matrix (3 OSes × 3 Pythons × pip/uv), image builds, live-sandbox integration |
+| **CI** | GitHub Actions — 9-way matrix (3 OSes × 3 Pythons), image builds, live-sandbox integration |
 
 Observability is optional: set the LangSmith variables and every run is traced.
 
